@@ -1,4 +1,4 @@
-[![Coverage](https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main)](https://coveralls.io/repos/github/bearswithsaws/bitfactory/)
+[![Coverage](https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main)](https://coveralls.io/github/bearswithsaws/bitfactory)
 [![Pytest](https://github.com/bearswithsaws/bitfactory/actions/workflows/pytest.yml/badge.svg)](https://github.com/bearswithsaws/bitfactory/actions/workflows/pytest.yml)
 
 
