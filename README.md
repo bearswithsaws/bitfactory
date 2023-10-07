@@ -3,7 +3,8 @@
         <img src="https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main" /></a>
 </p>
 
-![Pytest](https://github.com/bearswithsaws/bitfactory/actions/workflows/poetry_pytest.yml/badge.svg)
+![Coverage](https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main)
+![Pytest](https://github.com/bearswithsaws/bitfactory/actions/workflows/pytest.yml/badge.svg)
 
 
 # BitFactory
