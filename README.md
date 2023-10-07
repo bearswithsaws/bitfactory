@@ -1,4 +1,7 @@
-[[!Coverage](https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main)](https://coveralls.io/repos/github/bearswithsaws/bitfactory)
+<p align="center">
+    <a href="https://coveralls.io/repos/github/bearswithsaws/bitfactory" alt="Contributors">
+        <img src="https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main" /></a>
+</p>
 # BitFactory
 
 A module designed to facilitate quick and easy structured binary data creation allowing for the automatic adjustments of types such as lengths, checksums, etc of the modeled data.
