@@ -1,3 +1,4 @@
+[!Coverage](https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main)
 # BitFactory
 
 A module designed to facilitate quick and easy structured binary data creation allowing for the automatic adjustments of types such as lengths, checksums, etc of the modeled data.
