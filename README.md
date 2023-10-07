@@ -1,7 +1,11 @@
-<p align="center">
+<p align="left">
     <a href="https://coveralls.io/repos/github/bearswithsaws/bitfactory" alt="Contributors">
         <img src="https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main" /></a>
 </p>
+
+![Pytest](https://github.com/bearswithsaws/bitfactory/actions/workflows/poetry_pytest.yml/badge.svg)
+
+
 # BitFactory
 
 A module designed to facilitate quick and easy structured binary data creation allowing for the automatic adjustments of types such as lengths, checksums, etc of the modeled data.
