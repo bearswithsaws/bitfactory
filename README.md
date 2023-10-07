@@ -1,10 +1,5 @@
-<p align="left">
-    <a href="https://coveralls.io/repos/github/bearswithsaws/bitfactory" alt="Contributors">
-        <img src="https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main" /></a>
-</p>
-
-![Coverage](https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main)
-![Pytest](https://github.com/bearswithsaws/bitfactory/actions/workflows/pytest.yml/badge.svg)
+[![Coverage](https://coveralls.io/repos/github/bearswithsaws/bitfactory/badge.svg?branch=main)](https://coveralls.io/repos/github/bearswithsaws/bitfactory/)
+[![Pytest](https://github.com/bearswithsaws/bitfactory/actions/workflows/pytest.yml/badge.svg)](https://github.com/bearswithsaws/bitfactory/actions/workflows/pytest.yml)
 
 
 # BitFactory
