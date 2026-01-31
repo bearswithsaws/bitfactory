@@ -2,6 +2,7 @@
 
 **Date:** 2026-01-31
 **Files Reviewed:** `bitfactory/bitfactory.py` (lines 410-497)
+**Status:** ✅ **IMPLEMENTED** - All recommendations have been applied.
 
 ## Overview
 
@@ -9,16 +10,16 @@ This review examines the `BFLengthRef` and `BFCallableRef` classes in the bitfac
 
 ## Summary of Findings
 
-| Issue | Severity | Type |
-|-------|----------|------|
-| Code duplication between classes | Medium | Architecture |
-| Misleading `_get_children()` name | Low | Code Quality |
-| Missing error handling for invalid paths | High | Bug |
-| Missing input validation | Medium | Bug |
-| Side effects in property getter | Low | Code Smell |
-| Redundant method parameter | Low | Code Quality |
-| BFLengthRef duplicates BFCallableRef logic | Medium | Architecture |
-| Incorrect type annotation | Low | Code Quality |
+| Issue | Severity | Type | Status |
+|-------|----------|------|--------|
+| Code duplication between classes | Medium | Architecture | ✅ Fixed |
+| Misleading `_get_children()` name | Low | Code Quality | ✅ Fixed |
+| Missing error handling for invalid paths | High | Bug | ✅ Fixed |
+| Missing input validation | Medium | Bug | ✅ Fixed |
+| Side effects in property getter | Low | Code Smell | ✅ Fixed |
+| Redundant method parameter | Low | Code Quality | ✅ Fixed |
+| BFLengthRef duplicates BFCallableRef logic | Medium | Architecture | ✅ Fixed |
+| Incorrect type annotation | Low | Code Quality | ✅ Fixed |
 
 ---
 
@@ -276,3 +277,43 @@ The library works correctly for valid inputs (all tests pass), but lacks defensi
 3. **Medium Priority:** Add input validation in constructors
 
 These changes would make the library more robust and maintainable without changing its public API.
+
+---
+
+## Implementation Status
+
+All recommendations have been implemented:
+
+### Changes Made
+
+1. **New `BFRefBase` class** (`bitfactory/bitfactory.py`):
+   - Shared base class for reference-based computed fields
+   - Input validation for `container_ref` (must be non-empty string)
+   - `_get_root()` now uses iteration instead of recursion
+   - `_resolve_ref()` replaces `_get_children()` with proper error handling
+   - Abstract `_compute_value()` method for subclasses
+
+2. **Refactored `BFLengthRef`**:
+   - Now extends `BFRefBase`
+   - Only implements `_compute_value()` returning `len(packed_data)`
+   - ~80% code reduction
+
+3. **Refactored `BFCallableRef`**:
+   - Now extends `BFRefBase`
+   - Adds validation that `func` is callable
+   - Only implements `_compute_value()` calling `self._func(packed_data)`
+   - ~70% code reduction
+
+4. **New `BFRefBase` exported** from `bitfactory/__init__.py` for extensibility
+
+5. **New validation tests** (`tests/test_bitfactory.py`):
+   - `test_invalid_container_ref_empty_string`
+   - `test_invalid_container_ref_none`
+   - `test_invalid_container_ref_non_string`
+   - `test_invalid_func_not_callable`
+   - `test_invalid_reference_path`
+   - `test_invalid_nested_reference_path`
+
+### Test Results
+
+All 17 tests pass (11 original + 6 new validation tests).

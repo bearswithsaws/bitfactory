@@ -407,94 +407,133 @@ class BFLength(BFContainer):
         return ret
 
 
-class BFLengthRef(BFContainer):
-    """Length counted container, referencing another part of the tree"""
+class BFRefBase(BFContainer):
+    """Base class for reference-based computed fields.
 
-    def __init__(self, field, container_ref):
+    This class provides common functionality for fields that compute their
+    value based on data referenced elsewhere in the container tree.
+    """
+
+    def __init__(self, field, container_ref: str):
         super().__init__()
+        if not isinstance(container_ref, str) or not container_ref:
+            raise BFTypeException("container_ref must be a non-empty string")
         self._field = field
         self._ref = container_ref
-        # self._children["_data"] = container_ref
 
-    def _get_root(self, obj) -> BFBasicDataType:
-        if obj.parent is None:
-            return obj
-        return self._get_root(obj.parent)
+    def _get_root(self) -> "BFContainer":
+        """Navigate to the root of the container tree.
 
-    def _get_children(self):
-        """Returns the length someones children"""
-        root = self._get_root(self)
-        # a.b.c -> a, b, c
-        obj = root
-        path_parts = self._ref.split(".")
-        for part in path_parts:
-            obj = obj._children[part]
-
+        Returns:
+            The root BFContainer of the tree.
+        """
+        obj = self
+        while obj.parent is not None:
+            obj = obj.parent
         return obj
 
-    def pack(self):
-        children = self._get_children()
-        self._field.value = len(children.pack())
+    def _resolve_ref(self) -> "BFContainer":
+        """Resolve the reference path to the target container.
+
+        Returns:
+            The container referenced by the path.
+
+        Raises:
+            BFTypeException: If the reference path is invalid.
+        """
+        obj = self._get_root()
+        for part in self._ref.split("."):
+            try:
+                obj = obj._children[part]
+            except KeyError:
+                raise BFTypeException(
+                    f"Invalid reference path: '{self._ref}' - component '{part}' not found"
+                )
+        return obj
+
+    @abc.abstractmethod
+    def _compute_value(self, packed_data: bytes) -> int:
+        """Compute the field value from packed data.
+
+        Args:
+            packed_data: The packed bytes from the referenced container.
+
+        Returns:
+            The computed integer value for the field.
+        """
+
+    def pack(self) -> bytes:
+        target = self._resolve_ref()
+        self._field.value = self._compute_value(target.pack())
         return self._field.pack()
 
     @property
-    def value(self):
-        children = self._get_children()
-        self._field.value = len(children.pack())
-        return self._field.value
+    def value(self) -> int:
+        target = self._resolve_ref()
+        return self._compute_value(target.pack())
 
     def __str__(self):
         return self.pretty_print()
 
     def pretty_print(self, indent=0):
-        ret = " " * indent + f"+{self.name} length: 0x{self.value:0x}\n"
-
-        return ret
+        return " " * indent + f"+{self.name} value: 0x{self.value:0x}\n"
 
 
-class BFCallableRef(BFContainer):
-    """Compute a field based on a reference to a branch and a callable"""
+class BFLengthRef(BFRefBase):
+    """Length field referencing an external container.
 
-    def __init__(self, field, func, container_ref):
-        super().__init__()
-        self._field = field
+    Computes the length (in bytes) of the packed data from a referenced
+    container elsewhere in the tree.
+    """
+
+    def _compute_value(self, packed_data: bytes) -> int:
+        """Compute the length of the packed data.
+
+        Args:
+            packed_data: The packed bytes from the referenced container.
+
+        Returns:
+            The length of the packed data in bytes.
+        """
+        return len(packed_data)
+
+    def pretty_print(self, indent=0):
+        return " " * indent + f"+{self.name} length: 0x{self.value:0x}\n"
+
+
+class BFCallableRef(BFRefBase):
+    """Computed field using a callable on an external container.
+
+    Applies a user-provided function (e.g., checksum) to the packed data
+    from a referenced container elsewhere in the tree.
+    """
+
+    def __init__(self, field, func, container_ref: str):
+        """Initialize a BFCallableRef.
+
+        Args:
+            field: The numeric field type to hold the computed value.
+            func: A callable that takes bytes and returns an int.
+            container_ref: Path to the referenced container (e.g., "sub.data").
+
+        Raises:
+            BFTypeException: If func is not callable or container_ref is invalid.
+        """
+        super().__init__(field, container_ref)
+        if not callable(func):
+            raise BFTypeException("func must be callable")
         self._func = func
-        self._ref = container_ref
 
-    def _get_root(self, obj) -> BFBasicDataType:
-        if obj.parent is None:
-            return obj
-        return self._get_root(obj.parent)
+    def _compute_value(self, packed_data: bytes) -> int:
+        """Compute the value by applying the function to packed data.
 
-    def _get_children(self):
-        """Returns children of the branch referred to"""
-        root = self._get_root(self)
-        # a.b.c -> a, b, c
-        obj = root
-        path_parts = self._ref.split(".")
-        for part in path_parts:
-            obj = obj._children[part]
+        Args:
+            packed_data: The packed bytes from the referenced container.
 
-        return obj
-
-    def pack(self):
-        children = self._get_children()
-        self._field.value = self._func(children.pack())
-        return self._field.pack()
-
-    @property
-    def value(self):
-        children = self._get_children()
-        self._field.value = self._func(children.pack())
-        return self._field.value
-
-    def __str__(self):
-        return self.pretty_print()
-
-    def pretty_print(self, indent=0):
-        ret = " " * indent + f"+{self.name} value: 0x{self.value:0x}\n"
-
-        return ret
+        Returns:
+            The result of applying the function to the packed data.
+        """
+        return self._func(packed_data)
 
 
 def main():
