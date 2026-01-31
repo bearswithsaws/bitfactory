@@ -51,6 +51,7 @@ def run_binary_with_input(
     try:
         # Split the binary_path in case it includes arguments
         import shlex
+
         cmd = shlex.split(binary_path)
 
         result = subprocess.run(
@@ -129,7 +130,7 @@ def print_crash_info(crash: CrashInfo) -> None:
     print("\nPacked Data (first 64 bytes):")
     hex_data = result.packed_data[:64].hex()
     for i in range(0, len(hex_data), 32):
-        print(f"  {hex_data[i:i+32]}")
+        print(f"  {hex_data[i : i + 32]}")
 
     if crash.stderr:
         print("\nStderr Output:")
@@ -142,9 +143,7 @@ def print_crash_info(crash: CrashInfo) -> None:
 
 def main():
     """Main fuzzing function"""
-    parser = argparse.ArgumentParser(
-        description="Simple buffer fuzzer using BitFactory mutations"
-    )
+    parser = argparse.ArgumentParser(description="Simple buffer fuzzer using BitFactory mutations")
     parser.add_argument("binary", help="Path to the binary executable to fuzz")
     parser.add_argument(
         "initial_data",
@@ -189,9 +188,7 @@ def main():
     )
     print(f"Baseline return code: {baseline_rc}")
     if baseline_rc != 0:
-        print(
-            f"WARNING: Baseline execution returned non-zero code: {baseline_rc}"
-        )
+        print(f"WARNING: Baseline execution returned non-zero code: {baseline_rc}")
     print()
 
     # Iterate through all mutations
