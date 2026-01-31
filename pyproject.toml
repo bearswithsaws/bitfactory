@@ -1,29 +1,78 @@
-[tool.poetry]
+[project]
 name = "bitfactory"
-version = "0.1.0"
+version = "0.2.0"
 description = "Create structured binary data easily."
-authors = ["Nyz <nyz@bearswithsa.ws>"]
+authors = [{ name = "Nyz", email = "nyz@bearswithsa.ws" }]
+requires-python = ">=3.9,<4"
 readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 
-[tool.poetry.dependencies]
-python = "^3.9"
+[dependency-groups]
+dev = [
+    "pytest>=7.4.2,<8",
+    "pytest-cov>=4.1.0,<5",
+    "ruff>=0.4.0",
+    "mypy>=1.5.1,<2",
+]
 
+[tool.uv]
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.2"
-pylint = "^2.15.5"
-bandit = "^1.7.5"
-black = "^23.9.1"
-isort = "^5.12.0"
-mypy = "^1.5.1"
-ruff = "^0.0.292"
-pycln = "^2.2.2"
-pytest-cov = "^4.1.0"
+[tool.uv.build-backend]
+module-root = ""
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
 
-[tool.pylint."MESSAGE CONTROL"]
-# W0212: Access to a protected member, resolve this at some point
-disable = "C0116,R0902,W0212"
+# Ruff configuration - replaces pylint, black, isort, flake8, etc.
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "B027",   # empty method in abstract base class (intentional for optional overrides)
+    "C901",   # too complex
+    "SIM108", # Use ternary operator instead of if-else-block
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "F403",   # star imports OK in tests
+    "F405",   # may be undefined from star import
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bitfactory"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

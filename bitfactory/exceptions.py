@@ -1,5 +1,4 @@
-"""BitFactory Exceptions
-"""
+"""BitFactory Exceptions"""
 
 
 class BFRangeException(Exception):
