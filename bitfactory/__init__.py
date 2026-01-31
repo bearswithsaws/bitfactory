@@ -16,6 +16,7 @@ from .bitfactory import (
     BFUInt32,
 )
 from .mutators import (
+    BFBitFlipMutator,
     BFBufferContentMutator,
     BFBufferLengthMutator,
     BFBufferNullTerminationMutator,
@@ -61,6 +62,8 @@ __all__ = [
     "BFIntegerSignMutator",
     "BFIntegerSpecialValueMutator",
     "BFIntegerBitPatternMutator",
+    # Bit manipulation mutators
+    "BFBitFlipMutator",
     # Buffer mutators
     "BFBufferLengthMutator",
     "BFBufferContentMutator",

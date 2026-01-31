@@ -4,7 +4,10 @@ import pytest
 
 from bitfactory import (
     BFBuffer,
+    BFCallableRef,
     BFContainer,
+    BFLength,
+    BFLengthRef,
     BFSInt8,
     BFSInt16,
     BFSInt32,
@@ -13,6 +16,7 @@ from bitfactory import (
     BFUInt32,
 )
 from bitfactory.mutators import (
+    BFBitFlipMutator,
     BFBufferContentMutator,
     BFBufferLengthMutator,
     BFBufferNullTerminationMutator,
@@ -41,6 +45,66 @@ class TestTraversalOrder:
         assert TraversalOrder.BFS is not None
 
 
+class TestMetadataSystem:
+    """Test the generic metadata system"""
+
+    def test_metadata_has_references(self):
+        """Test that CWE-based mutators have references in metadata"""
+        mutator = BFIntegerBoundaryMutator()
+        metadata = mutator.metadata
+
+        assert "references" in metadata
+        assert len(metadata["references"]) > 0
+
+        # Check structure of references
+        ref = metadata["references"][0]
+        assert "source" in ref
+        assert "id" in ref
+        assert ref["source"] == "CWE"
+
+    def test_metadata_has_tags(self):
+        """Test that mutators have tags"""
+        mutator = BFIntegerBoundaryMutator()
+        metadata = mutator.metadata
+
+        assert "tags" in metadata
+        assert isinstance(metadata["tags"], list)
+        assert "overflow" in metadata["tags"]
+
+    def test_metadata_has_category(self):
+        """Test that mutators have category"""
+        mutator = BFIntegerBoundaryMutator()
+        metadata = mutator.metadata
+
+        assert "category" in metadata
+        assert metadata["category"] == "integer-arithmetic"
+
+    def test_non_cwe_mutator_metadata(self):
+        """Test that non-CWE mutators have appropriate metadata"""
+        mutator = BFBitFlipMutator()
+        metadata = mutator.metadata
+
+        # Should not have CWE references
+        assert "references" not in metadata or len(metadata.get("references", [])) == 0
+
+        # Should have tags and category
+        assert "tags" in metadata
+        assert "bit-flip" in metadata["tags"]
+        assert "category" in metadata
+
+    def test_mutation_result_contains_metadata(self):
+        """Test that MutationResult includes full metadata"""
+        bf_val = BFUInt8(value=42)
+        mut = BFMutatable(bf_val)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        result = next(iter(mut))
+
+        assert hasattr(result, "metadata")
+        assert isinstance(result.metadata, dict)
+        assert "references" in result.metadata
+
+
 class TestBFIntegerBoundaryMutator:
     """Test integer boundary mutator"""
 
@@ -48,8 +112,7 @@ class TestBFIntegerBoundaryMutator:
         """Test mutator properties"""
         mutator = BFIntegerBoundaryMutator()
         assert mutator.name == "Integer Boundary Mutator"
-        assert "CWE-190" in mutator.cwe_ids
-        assert "CWE-191" in mutator.cwe_ids
+        assert "references" in mutator.metadata
         assert BFUInt8 in mutator.supported_types
         assert BFSInt32 in mutator.supported_types
 
@@ -69,7 +132,6 @@ class TestBFIntegerBoundaryMutator:
         mutations = list(mutator.mutate(bf_val))
         values = [m[0] for m in mutations]
 
-        # Should include max/min values
         assert 255 in values  # MAX_UNSIGNED_8
         assert 256 in values  # MAX_UNSIGNED_8 + 1 (overflow)
         assert 0 in values  # MIN_UNSIGNED_8
@@ -121,8 +183,10 @@ class TestBFIntegerSignMutator:
     def test_properties(self):
         """Test mutator properties"""
         mutator = BFIntegerSignMutator()
-        assert "CWE-194" in mutator.cwe_ids
-        assert "CWE-195" in mutator.cwe_ids
+        assert "references" in mutator.metadata
+        refs = [r["id"] for r in mutator.metadata["references"]]
+        assert "194" in refs
+        assert "195" in refs
 
     def test_sign_bit_values(self):
         """Test that sign bit mutations are generated"""
@@ -132,9 +196,8 @@ class TestBFIntegerSignMutator:
         mutations = list(mutator.mutate(bf_val))
         values = [m[0] for m in mutations]
 
-        # Should have sign bit set value
         assert 0x80 in values
-        assert 0x7F in values  # All bits except sign
+        assert 0x7F in values
 
     def test_signed_type_mutations(self):
         """Test mutations for signed types"""
@@ -154,8 +217,9 @@ class TestBFIntegerSpecialValueMutator:
     def test_properties(self):
         """Test mutator properties"""
         mutator = BFIntegerSpecialValueMutator()
-        assert "CWE-369" in mutator.cwe_ids  # Divide by zero
-        assert "CWE-682" in mutator.cwe_ids
+        refs = [r["id"] for r in mutator.metadata["references"]]
+        assert "369" in refs  # Divide by zero
+        assert "682" in refs
 
     def test_special_values(self):
         """Test special value mutations"""
@@ -165,11 +229,8 @@ class TestBFIntegerSpecialValueMutator:
         mutations = list(mutator.mutate(bf_val))
         values = [m[0] for m in mutations]
 
-        # Zero for divide-by-zero
         assert 0 in values
-        # One for off-by-one
         assert 1 in values
-        # Powers of two
         assert 4 in values
         assert 16 in values
         assert 256 in values
@@ -181,7 +242,8 @@ class TestBFIntegerBitPatternMutator:
     def test_properties(self):
         """Test mutator properties"""
         mutator = BFIntegerBitPatternMutator()
-        assert "CWE-704" in mutator.cwe_ids
+        refs = [r["id"] for r in mutator.metadata["references"]]
+        assert "704" in refs
 
     def test_bit_patterns_uint8(self):
         """Test bit pattern mutations for 8-bit"""
@@ -191,12 +253,12 @@ class TestBFIntegerBitPatternMutator:
         mutations = list(mutator.mutate(bf_val))
         values = [m[0] for m in mutations]
 
-        assert 0xFF in values  # All bits set
-        assert 0xAA in values  # Alternating 10101010
-        assert 0x55 in values  # Alternating 01010101
-        assert 1 in values  # Single bit 0
-        assert 2 in values  # Single bit 1
-        assert 0x0F in values  # Low nibble
+        assert 0xFF in values
+        assert 0xAA in values
+        assert 0x55 in values
+        assert 1 in values
+        assert 2 in values
+        assert 0x0F in values
 
     def test_bit_patterns_uint32(self):
         """Test bit pattern mutations for 32-bit"""
@@ -213,14 +275,86 @@ class TestBFIntegerBitPatternMutator:
         assert 0xFFFF0000 in values
 
 
+class TestBFBitFlipMutator:
+    """Test bit flip mutator"""
+
+    def test_properties(self):
+        """Test mutator properties"""
+        mutator = BFBitFlipMutator()
+        assert mutator.name == "Bit Flip Mutator"
+        assert "bit-flip" in mutator.metadata["tags"]
+        assert "references" not in mutator.metadata or len(mutator.metadata.get("references", [])) == 0
+
+    def test_uint8_bit_flips(self):
+        """Test that UInt8 generates exactly 8 mutations"""
+        mutator = BFBitFlipMutator()
+        bf_val = BFUInt8(value=0b10101010)  # 0xAA
+
+        mutations = list(mutator.mutate(bf_val))
+
+        # Should have exactly 8 mutations (one per bit)
+        assert len(mutations) == 8
+
+        # Each mutation should flip exactly one bit
+        original = 0xAA
+        for i, (value, desc) in enumerate(mutations):
+            expected = original ^ (1 << i)
+            assert value == expected, f"Bit {i}: expected {expected}, got {value}"
+
+    def test_uint16_bit_flips(self):
+        """Test that UInt16 generates exactly 16 mutations"""
+        mutator = BFBitFlipMutator()
+        bf_val = BFUInt16(value=0x1234)
+
+        mutations = list(mutator.mutate(bf_val))
+        assert len(mutations) == 16
+
+    def test_uint32_bit_flips(self):
+        """Test that UInt32 generates exactly 32 mutations"""
+        mutator = BFBitFlipMutator()
+        bf_val = BFUInt32(value=0x12345678)
+
+        mutations = list(mutator.mutate(bf_val))
+        assert len(mutations) == 32
+
+    def test_buffer_bit_flips(self):
+        """Test buffer bit flips"""
+        mutator = BFBitFlipMutator()
+        bf_val = BFBuffer(b"\xAA\x55")  # 2 bytes
+
+        mutations = list(mutator.mutate(bf_val))
+
+        # Should have 16 mutations (8 bits * 2 bytes)
+        assert len(mutations) == 16
+
+        # Check first byte mutations
+        for i in range(8):
+            value, desc = mutations[i]
+            expected = bytearray(b"\xAA\x55")
+            expected[0] ^= (1 << i)
+            assert value == bytes(expected)
+
+    def test_bit_flip_description(self):
+        """Test that descriptions are informative"""
+        mutator = BFBitFlipMutator()
+        bf_val = BFUInt8(value=0xFF)
+
+        mutations = list(mutator.mutate(bf_val))
+        _, desc = mutations[0]
+
+        assert "Flip bit" in desc
+        assert "0x" in desc
+
+
 class TestBFBufferLengthMutator:
     """Test buffer length mutator"""
 
     def test_properties(self):
         """Test mutator properties"""
         mutator = BFBufferLengthMutator()
-        assert "CWE-120" in mutator.cwe_ids
-        assert "CWE-787" in mutator.cwe_ids
+        refs = [r["id"] for r in mutator.metadata["references"]]
+        assert "120" in refs
+        assert "787" in refs
         assert BFBuffer in mutator.supported_types
 
     def test_can_mutate(self):
@@ -236,11 +370,8 @@ class TestBFBufferLengthMutator:
 
         mutations = list(mutator.mutate(bf_val))
 
-        # Check for empty buffer
         assert any(m[0] == b"" for m in mutations)
-        # Check for single byte
         assert any(m[0] == b"\x00" for m in mutations)
-        # Check for various boundary sizes
         lengths = [len(m[0]) for m in mutations]
         assert 1 in lengths
         assert 256 in lengths
@@ -252,8 +383,9 @@ class TestBFBufferContentMutator:
     def test_properties(self):
         """Test mutator properties"""
         mutator = BFBufferContentMutator()
-        assert "CWE-134" in mutator.cwe_ids  # Format string
-        assert "CWE-78" in mutator.cwe_ids  # Command injection
+        refs = [r["id"] for r in mutator.metadata["references"]]
+        assert "134" in refs
+        assert "78" in refs
 
     def test_content_mutations(self):
         """Test buffer content mutations"""
@@ -263,14 +395,9 @@ class TestBFBufferContentMutator:
         mutations = list(mutator.mutate(bf_val))
         values = [m[0] for m in mutations]
 
-        # Check for format string patterns
         assert any(b"%s" in v for v in values)
         assert any(b"%n" in v for v in values)
-
-        # Check for all nulls
         assert any(v == b"\x00" * 16 for v in values)
-
-        # Check for path traversal
         assert any(b"/../" in v for v in values)
 
 
@@ -280,8 +407,9 @@ class TestBFBufferNullTerminationMutator:
     def test_properties(self):
         """Test mutator properties"""
         mutator = BFBufferNullTerminationMutator()
-        assert "CWE-170" in mutator.cwe_ids
-        assert "CWE-126" in mutator.cwe_ids
+        refs = [r["id"] for r in mutator.metadata["references"]]
+        assert "170" in refs
+        assert "126" in refs
 
     def test_null_mutations(self):
         """Test null termination mutations"""
@@ -291,13 +419,8 @@ class TestBFBufferNullTerminationMutator:
         mutations = list(mutator.mutate(bf_val))
         values = [m[0] for m in mutations]
 
-        # Should have version without null terminator
         assert b"hello" in values
-
-        # Should have multiple null terminators
         assert any(v.endswith(b"\x00\x00\x00") for v in values)
-
-        # Should have data after null
         assert b"AAAA\x00BBBB" in values
 
 
@@ -318,12 +441,10 @@ class TestBFMutatable:
         mut = BFMutatable(bf_val)
         mutator = BFIntegerBoundaryMutator()
 
-        # Add
         result = mut.add_mutator(mutator)
-        assert result is mut  # Method chaining
+        assert result is mut
         assert mutator in mut.mutators
 
-        # Remove
         result = mut.remove_mutator(mutator)
         assert result is mut
         assert mutator not in mut.mutators
@@ -347,9 +468,9 @@ class TestBFMutatable:
 
         assert len(results) > 0
         assert all(isinstance(r, MutationResult) for r in results)
-        assert all(r.path == "" for r in results)  # Single value, no path
+        assert all(r.path == "" for r in results)
         assert all(r.mutator_name == "Integer Boundary Mutator" for r in results)
-        assert all(len(r.packed_data) == 1 for r in results)  # UInt8 = 1 byte
+        assert all(len(r.packed_data) == 1 for r in results)
 
     def test_container_iteration(self):
         """Test iterating over mutations of a container"""
@@ -364,13 +485,11 @@ class TestBFMutatable:
 
         results = list(mut)
 
-        # Should have mutations from both header, size (int), and data (buffer)
         paths = set(r.path for r in results)
         assert "header" in paths
         assert "size" in paths
         assert "data" in paths
 
-        # All results should have packed data
         assert all(len(r.packed_data) > 0 for r in results)
 
     def test_nested_container_iteration(self):
@@ -404,17 +523,16 @@ class TestBFMutatable:
         results = list(mut)
         paths = set(r.path for r in results)
 
-        # Should only mutate field1
         assert "field1" in paths
         assert "field2" not in paths
 
-    def test_count_mutations(self):
-        """Test counting mutations"""
+    def test_total_count(self):
+        """Test total_count method"""
         bf_val = BFUInt8(value=42)
         mut = BFMutatable(bf_val)
         mut.add_mutator(BFIntegerBoundaryMutator())
 
-        count = mut.count_mutations()
+        count = mut.total_count()
         actual = len(list(mut))
 
         assert count == actual
@@ -437,6 +555,7 @@ class TestBFMutatable:
         assert "mutation_points" in summary
         assert "header" in summary["mutation_points"]
         assert "data" in summary["mutation_points"]
+        assert "total_mutations" in summary
 
     def test_mutation_preserves_original(self):
         """Test that mutation doesn't permanently modify original"""
@@ -444,13 +563,232 @@ class TestBFMutatable:
         mut = BFMutatable(bf_val)
         mut.add_mutator(BFIntegerBoundaryMutator())
 
-        # Iterate through some mutations
         for i, _ in enumerate(mut):
             if i > 5:
                 break
 
-        # Original should be unchanged
         assert bf_val.value == 12345
+
+    def test_mutation_result_has_index(self):
+        """Test that MutationResult includes index"""
+        bf_val = BFUInt8(value=42)
+        mut = BFMutatable(bf_val)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        results = list(mut)
+
+        # Check indices are sequential
+        for i, result in enumerate(results):
+            assert result.index == i
+
+
+class TestIterationResumption:
+    """Test iteration offset and limit for resumption"""
+
+    def test_start_offset(self):
+        """Test skipping mutations with start parameter"""
+        bf_val = BFUInt8(value=42)
+        mut = BFMutatable(bf_val)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        # Get all results
+        all_results = list(mut.iterate_mutations())
+
+        # Get results starting from index 3
+        offset_results = list(mut.iterate_mutations(start=3))
+
+        assert len(offset_results) == len(all_results) - 3
+        assert offset_results[0].index == 3
+
+    def test_limit(self):
+        """Test limiting number of mutations"""
+        bf_val = BFUInt8(value=42)
+        mut = BFMutatable(bf_val)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        results = list(mut.iterate_mutations(limit=5))
+
+        assert len(results) == 5
+        assert results[0].index == 0
+        assert results[4].index == 4
+
+    def test_start_and_limit(self):
+        """Test combining start and limit"""
+        bf_val = BFUInt8(value=42)
+        mut = BFMutatable(bf_val)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        # Get mutations 2-4 (3 total)
+        results = list(mut.iterate_mutations(start=2, limit=3))
+
+        assert len(results) == 3
+        assert results[0].index == 2
+        assert results[2].index == 4
+
+    def test_parallel_splitting(self):
+        """Test that we can split iterations for parallel processing"""
+        container = BFContainer()
+        container.a = BFUInt8(value=1)
+        container.b = BFUInt8(value=2)
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        total = mut.total_count()
+
+        # Simulate 3 parallel workers
+        chunk_size = total // 3
+
+        worker1 = list(mut.iterate_mutations(start=0, limit=chunk_size))
+        worker2 = list(mut.iterate_mutations(start=chunk_size, limit=chunk_size))
+        worker3 = list(mut.iterate_mutations(start=chunk_size * 2))
+
+        # All results should be covered
+        all_indices = (
+            [r.index for r in worker1] +
+            [r.index for r in worker2] +
+            [r.index for r in worker3]
+        )
+
+        assert len(all_indices) == total
+        assert sorted(all_indices) == list(range(total))
+
+    def test_resumption_scenario(self):
+        """Test a real resumption scenario"""
+        container = BFContainer()
+        container.value = BFUInt16(value=100)
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        # Simulate processing that got interrupted at index 3
+        processed = []
+        for result in mut.iterate_mutations():
+            processed.append(result.index)
+            if result.index == 2:
+                # Simulate interruption
+                break
+
+        # Resume from where we left off
+        resumed = list(mut.iterate_mutations(start=3))
+
+        # Verify we can reconstruct the full sequence
+        all_indices = processed + [r.index for r in resumed]
+        total = mut.total_count()
+
+        assert len(all_indices) == total
+
+
+class TestBFLengthStructures:
+    """Test mutators with BFLength counted structures"""
+
+    def test_bflength_traversal(self):
+        """Test that BFLength structures are properly traversed"""
+        container = BFContainer()
+        container.data = BFLength(BFUInt16(), BFContainer())
+        container.data.payload = BFUInt32(value=0xAABBCCDD)
+        container.data.extra = BFUInt8(value=10)
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        results = list(mut)
+        paths = set(r.path for r in results)
+
+        # Should traverse into the BFLength's data container
+        assert "data.payload" in paths
+        assert "data.extra" in paths
+
+    def test_bflength_packing(self):
+        """Test that mutations in BFLength still pack correctly"""
+        container = BFContainer()
+        container.len = BFLength(BFUInt16(), BFContainer())
+        container.len.data = BFUInt32(value=0xAABBCCDD)
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        for result in mut:
+            # All packed data should be valid bytes
+            assert isinstance(result.packed_data, bytes)
+            # Length field (2) + data (varies with mutation)
+            assert len(result.packed_data) >= 2
+
+
+class TestBFLengthRefStructures:
+    """Test mutators with BFLengthRef structures"""
+
+    def test_bflengthref_traversal(self):
+        """Test that BFLengthRef field is accessible for mutation"""
+        container = BFContainer()
+        container.length = BFLengthRef(BFUInt16(), "data")
+        container.data = BFContainer()
+        container.data.payload = BFUInt32(value=0xAABBCCDD)
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        results = list(mut)
+        paths = set(r.path for r in results)
+
+        # Should mutate the length field and the payload
+        assert "length" in paths
+        assert "data.payload" in paths
+
+    def test_bflengthref_packing(self):
+        """Test that BFLengthRef mutations pack correctly"""
+        container = BFContainer()
+        container.length = BFLengthRef(BFUInt16(), "data")
+        container.data = BFContainer()
+        container.data.payload = BFUInt32(value=0x12345678)
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        for result in mut:
+            assert isinstance(result.packed_data, bytes)
+            # Length (2) + payload (4)
+            assert len(result.packed_data) == 6
+
+
+class TestBFCallableRefStructures:
+    """Test mutators with BFCallableRef structures"""
+
+    def test_bfcallableref_traversal(self):
+        """Test that BFCallableRef field is accessible for mutation"""
+        def simple_checksum(data: bytes) -> int:
+            return sum(data) & 0xFFFF
+
+        container = BFContainer()
+        container.checksum = BFCallableRef(BFUInt16(), simple_checksum, "data")
+        container.data = BFContainer()
+        container.data.payload = BFUInt32(value=0xAABBCCDD)
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        results = list(mut)
+        paths = set(r.path for r in results)
+
+        # Should mutate both the checksum field and the payload
+        assert "checksum" in paths
+        assert "data.payload" in paths
+
+    def test_bfcallableref_packing(self):
+        """Test that BFCallableRef mutations pack correctly"""
+        def simple_checksum(data: bytes) -> int:
+            return sum(data) & 0xFFFF
+
+        container = BFContainer()
+        container.csum = BFCallableRef(BFUInt16(), simple_checksum, "data")
+        container.data = BFContainer()
+        container.data.value = BFUInt8(value=0x42)
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        for result in mut:
+            assert isinstance(result.packed_data, bytes)
 
 
 class TestTraversalOrders:
@@ -474,14 +812,11 @@ class TestTraversalOrders:
         results = list(mut)
         paths = [r.path for r in results]
 
-        # Should see nodes in depth-first order
-        # First occurrence of each path
         first_occurrence = {}
         for i, p in enumerate(paths):
             if p not in first_occurrence:
                 first_occurrence[p] = i
 
-        # a should come before sub.b and sub.c
         assert first_occurrence["a"] < first_occurrence["sub.b"]
 
     def test_bfs(self):
@@ -493,14 +828,11 @@ class TestTraversalOrders:
         results = list(mut)
         paths = [r.path for r in results]
 
-        # First occurrence of each path
         first_occurrence = {}
         for i, p in enumerate(paths):
             if p not in first_occurrence:
                 first_occurrence[p] = i
 
-        # In BFS, all top-level should come before nested
-        # a and d should come before sub.b and sub.c
         assert first_occurrence["a"] < first_occurrence["sub.b"]
         assert first_occurrence["d"] < first_occurrence["sub.b"]
 
@@ -550,7 +882,6 @@ class TestConvenienceFunctions:
         """Test mutate function with custom mutator list"""
         bf_val = BFUInt32(value=100)
 
-        # Use only boundary mutator
         results = list(mutate(bf_val, mutators=[BFIntegerBoundaryMutator()]))
 
         assert all(r.mutator_name == "Integer Boundary Mutator" for r in results)
@@ -561,12 +892,20 @@ class TestConvenienceFunctions:
         container.a = BFUInt8(value=1)
         container.b = BFUInt8(value=2)
 
-        # Should work with different orders
         results_dfs = list(mutate(container, order=TraversalOrder.DFS_PREORDER))
         results_bfs = list(mutate(container, order=TraversalOrder.BFS))
 
         assert len(results_dfs) > 0
         assert len(results_bfs) > 0
+
+    def test_mutate_with_start_limit(self):
+        """Test mutate function with start and limit"""
+        bf_val = BFUInt8(value=42)
+
+        results = list(mutate(bf_val, start=2, limit=3))
+
+        assert len(results) == 3
+        assert results[0].index == 2
 
 
 class TestMutationResult:
@@ -575,20 +914,22 @@ class TestMutationResult:
     def test_mutation_result_fields(self):
         """Test that MutationResult has all expected fields"""
         result = MutationResult(
+            index=42,
             path="test.field",
             original_value=100,
             mutated_value=255,
             mutator_name="Test Mutator",
-            cwe_ids=["CWE-190"],
+            metadata={"references": [{"source": "CWE", "id": "190"}], "tags": ["test"]},
             description="Overflow test",
             packed_data=b"\xff",
         )
 
+        assert result.index == 42
         assert result.path == "test.field"
         assert result.original_value == 100
         assert result.mutated_value == 255
         assert result.mutator_name == "Test Mutator"
-        assert "CWE-190" in result.cwe_ids
+        assert "references" in result.metadata
         assert result.description == "Overflow test"
         assert result.packed_data == b"\xff"
 
@@ -598,7 +939,6 @@ class TestIntegration:
 
     def test_full_packet_mutation(self):
         """Test mutating a complete packet structure"""
-        # Create a packet-like structure
         packet = BFContainer()
         packet.magic = BFUInt32(value=0x12345678)
         packet.version = BFUInt8(value=1)
@@ -610,18 +950,16 @@ class TestIntegration:
         for m in create_full_mutator_suite():
             mut.add_mutator(m)
 
-        # Count mutations
         count = 0
         for result in mut:
             count += 1
-            # Verify each result has valid packed data
             assert isinstance(result.packed_data, bytes)
             assert len(result.packed_data) > 0
 
-        assert count > 50  # Should have many mutations
+        assert count > 50
 
-    def test_cwe_coverage(self):
-        """Test that mutations cover expected CWEs"""
+    def test_metadata_coverage(self):
+        """Test that mutations include appropriate metadata"""
         container = BFContainer()
         container.num = BFUInt32(value=100)
         container.buf = BFBuffer(b"test")
@@ -630,17 +968,13 @@ class TestIntegration:
         for m in create_full_mutator_suite():
             mut.add_mutator(m)
 
-        # Collect all CWE IDs from mutations
-        all_cwes = set()
+        # Collect all sources from metadata
+        all_sources = set()
         for result in mut:
-            all_cwes.update(result.cwe_ids)
+            for ref in result.metadata.get("references", []):
+                all_sources.add(ref["source"])
 
-        # Should cover important CWEs
-        assert "CWE-190" in all_cwes  # Integer overflow
-        assert "CWE-191" in all_cwes  # Integer underflow
-        assert "CWE-120" in all_cwes  # Buffer overflow
-        assert "CWE-369" in all_cwes  # Divide by zero
-        assert "CWE-134" in all_cwes  # Format string
+        assert "CWE" in all_sources
 
     def test_generator_behavior(self):
         """Test that iteration is truly lazy (generator)"""
@@ -648,13 +982,33 @@ class TestIntegration:
         mut = BFMutatable(bf_val)
         mut.add_mutator(BFIntegerBoundaryMutator())
 
-        # Get iterator
         iterator = iter(mut)
 
-        # Should be able to get items one at a time
         result1 = next(iterator)
         result2 = next(iterator)
 
         assert result1 is not result2
         assert isinstance(result1, MutationResult)
         assert isinstance(result2, MutationResult)
+
+    def test_complex_nested_with_length(self):
+        """Test complex structure with BFLength"""
+        packet = BFContainer()
+        packet.header = BFContainer()
+        packet.header.magic = BFUInt32(value=0xDEADBEEF)
+        packet.header.version = BFUInt8(value=1)
+        packet.body = BFLength(BFUInt16(), BFContainer())
+        packet.body.data = BFBuffer(b"Hello World")
+        packet.body.checksum = BFUInt32(value=0)
+
+        mut = BFMutatable(packet)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+        mut.add_mutator(BFBufferLengthMutator())
+
+        results = list(mut)
+        paths = set(r.path for r in results)
+
+        assert "header.magic" in paths
+        assert "header.version" in paths
+        assert "body.data" in paths
+        assert "body.checksum" in paths

@@ -1,12 +1,29 @@
 """BitFactory Mutators Module
 
 This module provides a mutation system for BitFactory types that enables
-systematic generation of edge-case and potentially invalid values based
-on Common Weakness Enumeration (CWE) standards.
+systematic generation of edge-case and potentially invalid values for
+security testing, fuzzing, and protocol validation.
 
 Mutators can be attached to any BF type at any level in a hierarchy,
 and the system supports recursive iteration with configurable traversal
 orders (BFS, DFS preorder, DFS postorder).
+
+Metadata System:
+    Mutators provide metadata describing the test cases they generate.
+    This is flexible and can include references to various standards:
+    - CWE (Common Weakness Enumeration)
+    - OWASP categories
+    - Custom tags and descriptions
+
+    Example metadata:
+        {
+            "references": [
+                {"source": "CWE", "id": "190", "name": "Integer Overflow"},
+                {"source": "OWASP", "id": "A03", "name": "Injection"},
+            ],
+            "tags": ["boundary", "overflow", "integer"],
+            "category": "integer-arithmetic",
+        }
 """
 
 import abc
@@ -19,6 +36,10 @@ from .bitfactory import (
     BFBasicDataType,
     BFBuffer,
     BFContainer,
+    BFLength,
+    BFLengthRef,
+    BFCallableRef,
+    BFRefBase,
     BFSInt8,
     BFSInt16,
     BFSInt32,
@@ -47,20 +68,22 @@ class MutationResult:
     """Represents a single mutation result.
 
     Attributes:
+        index: The zero-based index of this mutation in the sequence
         path: Dot-separated path to the mutated field (e.g., "header.length")
         original_value: The original value before mutation
         mutated_value: The mutated value
         mutator_name: Name of the mutator that produced this value
-        cwe_ids: List of CWE identifiers relevant to this mutation
+        metadata: Flexible metadata dict (references, tags, category, etc.)
         description: Human-readable description of the mutation
         packed_data: The full packed binary data with the mutation applied
     """
 
+    index: int
     path: str
     original_value: Any
     mutated_value: Any
     mutator_name: str
-    cwe_ids: list[str]
+    metadata: dict[str, Any]
     description: str
     packed_data: bytes = b""
 
@@ -82,8 +105,7 @@ class BFMutator(abc.ABC):
     """Abstract base class for all BitFactory mutators.
 
     Mutators generate sequences of values designed to test edge cases,
-    boundary conditions, and potentially invalid states based on CWE
-    (Common Weakness Enumeration) standards.
+    boundary conditions, and potentially invalid states.
 
     Subclasses must implement the `mutate` method and specify which
     BF types they can mutate via `supported_types`.
@@ -96,8 +118,24 @@ class BFMutator(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def cwe_ids(self) -> list[str]:
-        """List of CWE identifiers this mutator addresses."""
+    def metadata(self) -> dict[str, Any]:
+        """Metadata describing this mutator's test cases.
+
+        Returns a dict that may contain:
+        - references: List of dicts with 'source', 'id', and optionally 'name'
+        - tags: List of string tags
+        - category: String category name
+        - description: Detailed description
+
+        Example:
+            {
+                "references": [
+                    {"source": "CWE", "id": "190", "name": "Integer Overflow"},
+                ],
+                "tags": ["boundary", "overflow"],
+                "category": "integer-arithmetic",
+            }
+        """
 
     @property
     @abc.abstractmethod
@@ -129,8 +167,16 @@ class BFMutator(abc.ABC):
         """
 
 
+def _make_cwe_ref(cwe_id: str, name: str = "") -> dict[str, str]:
+    """Helper to create a CWE reference entry."""
+    ref = {"source": "CWE", "id": cwe_id}
+    if name:
+        ref["name"] = name
+    return ref
+
+
 # =============================================================================
-# Integer Mutators - CWE-based edge cases
+# Integer Mutators - Boundary and edge case testing
 # =============================================================================
 
 
@@ -138,10 +184,7 @@ class BFIntegerBoundaryMutator(BFMutator):
     """Generates integer boundary values to test overflow/underflow conditions.
 
     This mutator produces values at and around the boundaries of integer
-    types, targeting vulnerabilities like:
-    - CWE-190: Integer Overflow or Wraparound
-    - CWE-191: Integer Underflow or Wraparound
-    - CWE-128: Wrap-around Error
+    types, targeting vulnerabilities like integer overflow and wraparound.
     """
 
     @property
@@ -149,8 +192,16 @@ class BFIntegerBoundaryMutator(BFMutator):
         return "Integer Boundary Mutator"
 
     @property
-    def cwe_ids(self) -> list[str]:
-        return ["CWE-190", "CWE-191", "CWE-128"]
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "references": [
+                _make_cwe_ref("190", "Integer Overflow or Wraparound"),
+                _make_cwe_ref("191", "Integer Underflow or Wraparound"),
+                _make_cwe_ref("128", "Wrap-around Error"),
+            ],
+            "tags": ["boundary", "overflow", "underflow", "integer"],
+            "category": "integer-arithmetic",
+        }
 
     @property
     def supported_types(self) -> tuple[type, ...]:
@@ -160,7 +211,6 @@ class BFIntegerBoundaryMutator(BFMutator):
         self, bf_type: BFBasicDataType
     ) -> Generator[tuple[int, str], None, None]:
         """Generate boundary values based on type."""
-        # Determine if signed and bit width
         is_signed = isinstance(bf_type, (BFSInt8, BFSInt16, BFSInt32))
 
         if isinstance(bf_type, (BFUInt8, BFSInt8)):
@@ -173,8 +223,8 @@ class BFIntegerBoundaryMutator(BFMutator):
             return
 
         if is_signed:
-            max_val = (1 << (bits - 1)) - 1  # e.g., 127 for 8-bit
-            min_val = -(1 << (bits - 1))  # e.g., -128 for 8-bit
+            max_val = (1 << (bits - 1)) - 1
+            min_val = -(1 << (bits - 1))
             unsigned_max = (1 << bits) - 1
 
             yield (max_val, f"MAX_SIGNED_{bits} ({max_val})")
@@ -184,10 +234,9 @@ class BFIntegerBoundaryMutator(BFMutator):
             yield (0, "Zero")
             yield (-1, "Negative one")
             yield (1, "One")
-            # Values that wrap when interpreted as unsigned
             yield (unsigned_max, f"MAX_UNSIGNED_{bits} as signed ({unsigned_max})")
         else:
-            max_val = (1 << bits) - 1  # e.g., 255 for 8-bit
+            max_val = (1 << bits) - 1
             min_val = 0
 
             yield (max_val, f"MAX_UNSIGNED_{bits} ({max_val})")
@@ -195,7 +244,6 @@ class BFIntegerBoundaryMutator(BFMutator):
             yield (min_val, f"MIN_UNSIGNED_{bits} (0)")
             yield (min_val - 1, f"MIN_UNSIGNED_{bits}-1 underflow (-1)")
             yield (1, "One")
-            # Half-max for midpoint testing
             yield (max_val // 2, f"HALF_MAX_{bits} ({max_val // 2})")
             yield ((max_val // 2) + 1, f"HALF_MAX_{bits}+1 ({(max_val // 2) + 1})")
 
@@ -210,21 +258,23 @@ class BFIntegerBoundaryMutator(BFMutator):
 
 
 class BFIntegerSignMutator(BFMutator):
-    """Tests sign-related integer vulnerabilities.
-
-    Targets:
-    - CWE-194: Unexpected Sign Extension
-    - CWE-195: Signed to Unsigned Conversion Error
-    - CWE-196: Unsigned to Signed Conversion Error
-    """
+    """Tests sign-related integer vulnerabilities."""
 
     @property
     def name(self) -> str:
         return "Integer Sign Mutator"
 
     @property
-    def cwe_ids(self) -> list[str]:
-        return ["CWE-194", "CWE-195", "CWE-196"]
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "references": [
+                _make_cwe_ref("194", "Unexpected Sign Extension"),
+                _make_cwe_ref("195", "Signed to Unsigned Conversion Error"),
+                _make_cwe_ref("196", "Unsigned to Signed Conversion Error"),
+            ],
+            "tags": ["sign", "conversion", "integer"],
+            "category": "integer-conversion",
+        }
 
     @property
     def supported_types(self) -> tuple[type, ...]:
@@ -245,34 +295,20 @@ class BFIntegerSignMutator(BFMutator):
         else:
             bits = 32
 
-        # Sign extension trigger values (high bit set)
         sign_bit_set = 1 << (bits - 1)
         yield (sign_bit_set, f"Sign bit set (0x{sign_bit_set:X})")
 
-        # All bits set except sign bit
         all_except_sign = (1 << (bits - 1)) - 1
         yield (all_except_sign, f"All bits except sign (0x{all_except_sign:X})")
 
-        # Patterns that cause issues when cast between signed/unsigned
         if is_signed:
             yield (-1, "Negative one (0xFF... when cast to unsigned)")
-            yield (
-                -(1 << (bits - 2)),
-                f"Large negative (-{1 << (bits - 2)})",
-            )
+            yield (-(1 << (bits - 2)), f"Large negative (-{1 << (bits - 2)})")
         else:
-            # Values > signed max that become negative when cast
             signed_max = (1 << (bits - 1)) - 1
-            yield (
-                signed_max + 1,
-                f"Signed overflow when cast (0x{signed_max + 1:X})",
-            )
-            yield (
-                (1 << bits) - 1,
-                f"All bits set - becomes -1 signed (0x{(1 << bits) - 1:X})",
-            )
+            yield (signed_max + 1, f"Signed overflow when cast (0x{signed_max + 1:X})")
+            yield ((1 << bits) - 1, f"All bits set - becomes -1 signed (0x{(1 << bits) - 1:X})")
 
-        # Byte patterns that sign-extend differently
         if bits > 8:
             yield (0x80, "0x80 - sign extends in smaller type")
             yield (0x7F, "0x7F - max positive in smaller type")
@@ -282,21 +318,23 @@ class BFIntegerSignMutator(BFMutator):
 
 
 class BFIntegerSpecialValueMutator(BFMutator):
-    """Generates special integer values that often cause issues.
-
-    Targets:
-    - CWE-369: Divide By Zero
-    - CWE-682: Incorrect Calculation
-    - CWE-681: Incorrect Conversion between Numeric Types
-    """
+    """Generates special integer values that often cause issues."""
 
     @property
     def name(self) -> str:
         return "Integer Special Value Mutator"
 
     @property
-    def cwe_ids(self) -> list[str]:
-        return ["CWE-369", "CWE-682", "CWE-681"]
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "references": [
+                _make_cwe_ref("369", "Divide By Zero"),
+                _make_cwe_ref("682", "Incorrect Calculation"),
+                _make_cwe_ref("681", "Incorrect Conversion between Numeric Types"),
+            ],
+            "tags": ["special-value", "divide-by-zero", "integer"],
+            "category": "integer-arithmetic",
+        }
 
     @property
     def supported_types(self) -> tuple[type, ...]:
@@ -308,13 +346,9 @@ class BFIntegerSpecialValueMutator(BFMutator):
         if not self.can_mutate(bf_type):
             return
 
-        # Zero - divide by zero, null pointer arithmetic
         yield (0, "Zero (potential divide-by-zero)")
-
-        # One - off-by-one errors
         yield (1, "One (off-by-one boundary)")
 
-        # Powers of two - common allocation sizes, alignment issues
         if isinstance(bf_type, (BFUInt8, BFSInt8)):
             max_power = 7
         elif isinstance(bf_type, (BFUInt16, BFSInt16)):
@@ -329,7 +363,6 @@ class BFIntegerSpecialValueMutator(BFMutator):
                 yield (val - 1, f"Power of 2 minus 1: 2^{power}-1 = {val - 1}")
                 yield (val + 1, f"Power of 2 plus 1: 2^{power}+1 = {val + 1}")
 
-        # Common size values that cause issues
         common_sizes = [
             (64, "Common block size"),
             (128, "Common buffer size"),
@@ -350,25 +383,27 @@ class BFIntegerSpecialValueMutator(BFMutator):
 
         max_val = (1 << bits) - 1
         for val, desc in common_sizes:
-            if val <= max_val + 1:  # Allow one over for overflow testing
+            if val <= max_val + 1:
                 yield (val, desc)
 
 
 class BFIntegerBitPatternMutator(BFMutator):
-    """Generates interesting bit patterns for testing.
-
-    Targets:
-    - CWE-704: Incorrect Type Conversion or Cast
-    - CWE-188: Reliance on Data/Memory Layout
-    """
+    """Generates interesting bit patterns for testing."""
 
     @property
     def name(self) -> str:
         return "Integer Bit Pattern Mutator"
 
     @property
-    def cwe_ids(self) -> list[str]:
-        return ["CWE-704", "CWE-188"]
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "references": [
+                _make_cwe_ref("704", "Incorrect Type Conversion or Cast"),
+                _make_cwe_ref("188", "Reliance on Data/Memory Layout"),
+            ],
+            "tags": ["bit-pattern", "memory-layout", "integer"],
+            "category": "bit-manipulation",
+        }
 
     @property
     def supported_types(self) -> tuple[type, ...]:
@@ -387,11 +422,9 @@ class BFIntegerBitPatternMutator(BFMutator):
         else:
             bits = 32
 
-        # All bits set
         all_ones = (1 << bits) - 1
         yield (all_ones, f"All bits set (0x{all_ones:X})")
 
-        # Alternating bit patterns
         if bits == 8:
             yield (0xAA, "Alternating bits 10101010")
             yield (0x55, "Alternating bits 01010101")
@@ -402,18 +435,15 @@ class BFIntegerBitPatternMutator(BFMutator):
             yield (0xAAAAAAAA, "Alternating bits 1010...")
             yield (0x55555555, "Alternating bits 0101...")
 
-        # Single bit walking
-        for i in range(min(bits, 8)):  # First 8 bits
+        for i in range(min(bits, 8)):
             val = 1 << i
             yield (val, f"Single bit {i} set (0x{val:X})")
 
-        # High bits for larger types
         if bits > 8:
             for i in [bits - 1, bits - 2, bits // 2]:
                 val = 1 << i
                 yield (val, f"Bit {i} set (0x{val:X})")
 
-        # Nibble patterns
         if bits >= 8:
             yield (0x0F, "Low nibble set")
             yield (0xF0, "High nibble of byte set")
@@ -425,28 +455,91 @@ class BFIntegerBitPatternMutator(BFMutator):
             yield (0xFFFF0000, "High word set")
 
 
+class BFBitFlipMutator(BFMutator):
+    """Flips individual bits in the value, one at a time.
+
+    For an 8-bit value, generates 8 mutations (one per bit).
+    For a 32-bit value, generates 32 mutations.
+    For buffers, generates len(buffer) * 8 mutations.
+
+    This is a non-CWE-based mutator useful for general fuzzing
+    and fault injection testing.
+    """
+
+    @property
+    def name(self) -> str:
+        return "Bit Flip Mutator"
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "tags": ["bit-flip", "fuzzing", "fault-injection"],
+            "category": "bit-manipulation",
+            "description": "Flips each bit individually to test error handling",
+        }
+
+    @property
+    def supported_types(self) -> tuple[type, ...]:
+        return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32, BFBuffer)
+
+    def mutate(
+        self, bf_type: BFBasicDataType
+    ) -> Generator[tuple[Any, str], None, None]:
+        if not self.can_mutate(bf_type):
+            return
+
+        if isinstance(bf_type, BFBuffer):
+            # For buffers, flip each bit in each byte
+            original = bf_type.value
+            for byte_idx in range(len(original)):
+                for bit_idx in range(8):
+                    # Create a copy with one bit flipped
+                    mutated = bytearray(original)
+                    mutated[byte_idx] ^= (1 << bit_idx)
+                    yield (
+                        bytes(mutated),
+                        f"Flip bit {bit_idx} of byte {byte_idx} "
+                        f"(0x{original[byte_idx]:02X} -> 0x{mutated[byte_idx]:02X})"
+                    )
+        else:
+            # For integers, determine bit width
+            if isinstance(bf_type, (BFUInt8, BFSInt8)):
+                bits = 8
+            elif isinstance(bf_type, (BFUInt16, BFSInt16)):
+                bits = 16
+            else:
+                bits = 32
+
+            original = bf_type.value
+            for bit_idx in range(bits):
+                mutated = original ^ (1 << bit_idx)
+                yield (mutated, f"Flip bit {bit_idx} (0x{original:X} -> 0x{mutated & ((1 << bits) - 1):X})")
+
+
 # =============================================================================
-# Buffer Mutators - CWE-based edge cases
+# Buffer Mutators
 # =============================================================================
 
 
 class BFBufferLengthMutator(BFMutator):
-    """Generates buffer length edge cases.
-
-    Targets:
-    - CWE-120: Buffer Copy without Checking Size
-    - CWE-787: Out-of-bounds Write
-    - CWE-125: Out-of-bounds Read
-    - CWE-131: Incorrect Calculation of Buffer Size
-    """
+    """Generates buffer length edge cases."""
 
     @property
     def name(self) -> str:
         return "Buffer Length Mutator"
 
     @property
-    def cwe_ids(self) -> list[str]:
-        return ["CWE-120", "CWE-787", "CWE-125", "CWE-131"]
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "references": [
+                _make_cwe_ref("120", "Buffer Copy without Checking Size"),
+                _make_cwe_ref("787", "Out-of-bounds Write"),
+                _make_cwe_ref("125", "Out-of-bounds Read"),
+                _make_cwe_ref("131", "Incorrect Calculation of Buffer Size"),
+            ],
+            "tags": ["buffer", "length", "overflow"],
+            "category": "buffer-handling",
+        }
 
     @property
     def supported_types(self) -> tuple[type, ...]:
@@ -457,20 +550,9 @@ class BFBufferLengthMutator(BFMutator):
 
         Args:
             length_variations: List of length adjustments to apply
-                             (e.g., [-1, 0, 1, 255, 256] for various off-by-N)
         """
         self._length_variations = length_variations or [
-            -1,
-            0,
-            1,
-            2,
-            -2,
-            255,
-            256,
-            1024,
-            4096,
-            65535,
-            65536,
+            -1, 0, 1, 2, -2, 255, 256, 1024, 4096, 65535, 65536,
         ]
 
     def mutate(
@@ -481,49 +563,45 @@ class BFBufferLengthMutator(BFMutator):
 
         original_len = len(bf_type.value)
 
-        # Empty buffer
         yield (b"", "Empty buffer (length=0)")
-
-        # Single byte
         yield (b"\x00", "Single null byte")
         yield (b"\xff", "Single 0xFF byte")
 
-        # Length variations relative to original
         for delta in self._length_variations:
             new_len = original_len + delta
             if new_len > 0 and new_len != original_len:
-                # Pad with pattern or truncate
                 if new_len > original_len:
                     new_data = bf_type.value + (b"\x41" * (new_len - original_len))
                 else:
                     new_data = bf_type.value[:new_len]
                 yield (new_data, f"Length {original_len} -> {new_len} (delta={delta:+d})")
 
-        # Common boundary sizes
         boundary_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 255, 256, 512, 1024, 4096]
         for size in boundary_sizes:
             if size != original_len:
-                data = (b"\x42" * size)
+                data = b"\x42" * size
                 yield (data, f"Boundary size {size} bytes")
 
 
 class BFBufferContentMutator(BFMutator):
-    """Generates buffers with special content patterns.
-
-    Targets:
-    - CWE-134: Use of Externally-Controlled Format String
-    - CWE-78: OS Command Injection
-    - CWE-89: SQL Injection
-    - CWE-79: XSS (if buffer is used in web context)
-    """
+    """Generates buffers with special content patterns."""
 
     @property
     def name(self) -> str:
         return "Buffer Content Mutator"
 
     @property
-    def cwe_ids(self) -> list[str]:
-        return ["CWE-134", "CWE-78", "CWE-89", "CWE-79"]
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "references": [
+                _make_cwe_ref("134", "Use of Externally-Controlled Format String"),
+                _make_cwe_ref("78", "OS Command Injection"),
+                _make_cwe_ref("89", "SQL Injection"),
+                _make_cwe_ref("79", "XSS"),
+            ],
+            "tags": ["buffer", "content", "injection"],
+            "category": "injection-testing",
+        }
 
     @property
     def supported_types(self) -> tuple[type, ...]:
@@ -537,16 +615,15 @@ class BFBufferContentMutator(BFMutator):
 
         original_len = max(len(bf_type.value), 16)
 
-        # Null bytes
         yield (b"\x00" * original_len, "All null bytes")
-        yield (bf_type.value[:1] + b"\x00" + bf_type.value[2:] if len(bf_type.value) > 2 else b"\x00",
-               "Embedded null byte")
+        yield (
+            bf_type.value[:1] + b"\x00" + bf_type.value[2:] if len(bf_type.value) > 2 else b"\x00",
+            "Embedded null byte"
+        )
 
-        # High bytes
         yield (b"\xff" * original_len, "All 0xFF bytes")
         yield (b"\x80" * original_len, "All 0x80 bytes (high bit set)")
 
-        # Format string patterns (for testing format string vulnerabilities)
         format_patterns = [
             b"%s%s%s%s%s",
             b"%n%n%n%n%n",
@@ -557,33 +634,30 @@ class BFBufferContentMutator(BFMutator):
         for pattern in format_patterns:
             yield (pattern, f"Format string: {pattern[:20]}")
 
-        # Long repetitive patterns
         yield (b"A" * 1024, "Long A pattern (1024 bytes)")
         yield (b"A" * 4096, "Long A pattern (4096 bytes)")
-
-        # Pattern with incrementing bytes
         yield (bytes(range(256)), "All byte values 0x00-0xFF")
-
-        # Patterns that might break string handling
         yield (b"\r\n" * 100, "CRLF repetition")
         yield (b"/../" * 50, "Path traversal pattern")
 
 
 class BFBufferNullTerminationMutator(BFMutator):
-    """Tests null termination handling in buffers.
-
-    Targets:
-    - CWE-170: Improper Null Termination
-    - CWE-126: Buffer Over-read
-    """
+    """Tests null termination handling in buffers."""
 
     @property
     def name(self) -> str:
         return "Buffer Null Termination Mutator"
 
     @property
-    def cwe_ids(self) -> list[str]:
-        return ["CWE-170", "CWE-126"]
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "references": [
+                _make_cwe_ref("170", "Improper Null Termination"),
+                _make_cwe_ref("126", "Buffer Over-read"),
+            ],
+            "tags": ["buffer", "null-termination", "string"],
+            "category": "string-handling",
+        }
 
     @property
     def supported_types(self) -> tuple[type, ...]:
@@ -598,24 +672,18 @@ class BFBufferNullTerminationMutator(BFMutator):
         original = bf_type.value
         length = len(original)
 
-        # No null terminator
         if original.endswith(b"\x00"):
             yield (original[:-1], "Removed null terminator")
         else:
             yield (original + b"A" * 10, "Extended without null terminator")
 
-        # Multiple null terminators
         yield (original + b"\x00\x00\x00", "Multiple null terminators")
 
-        # Null in middle
         if length > 2:
             mid = length // 2
             yield (original[:mid] + b"\x00" + original[mid + 1:], "Null in middle")
 
-        # Null at start
         yield (b"\x00" + original[1:] if length > 0 else b"\x00", "Null at start")
-
-        # String after null
         yield (b"AAAA\x00BBBB", "Data after null terminator")
 
 
@@ -631,6 +699,12 @@ class BFMutatable:
     and provides iteration over all possible mutations based on attached
     mutators.
 
+    Supports:
+    - Iteration offset and limit for resumption and parallelization
+    - Multiple traversal orders (BFS, DFS)
+    - Path-restricted mutators
+    - BFLength, BFLengthRef, and BFCallableRef structures
+
     Example:
         >>> container = BFContainer()
         >>> container.header = BFUInt32(value=100)
@@ -638,11 +712,13 @@ class BFMutatable:
         >>>
         >>> mut = BFMutatable(container)
         >>> mut.add_mutator(BFIntegerBoundaryMutator())
-        >>> mut.add_mutator(BFBufferLengthMutator())
         >>>
-        >>> for result in mut:
-        ...     print(f"{result.path}: {result.description}")
-        ...     # result.packed_data contains the full mutated binary
+        >>> # Get total count for progress tracking
+        >>> total = mut.total_count()
+        >>>
+        >>> # Iterate with offset for resumption
+        >>> for result in mut.iterate_mutations(start=100, limit=50):
+        ...     print(f"[{result.index}] {result.path}: {result.description}")
     """
 
     def __init__(self, bf_type: BFBasicDataType):
@@ -665,7 +741,6 @@ class BFMutatable:
         Args:
             mutator: The mutator instance to attach
             path: Optional path to restrict where this mutator applies.
-                  If None, applies to all matching types in the hierarchy.
 
         Returns:
             self for method chaining
@@ -702,34 +777,6 @@ class BFMutatable:
         """Get list of attached mutators."""
         return [b.mutator for b in self._mutators]
 
-    def _collect_nodes(
-        self,
-        node: BFBasicDataType,
-        path: str = "",
-    ) -> list[tuple[str, BFBasicDataType]]:
-        """Collect all nodes in the tree with their paths.
-
-        Args:
-            node: Current node
-            path: Current path string
-
-        Returns:
-            List of (path, node) tuples
-        """
-        nodes = []
-
-        if isinstance(node, BFContainer):
-            for name, child in node._children.items():
-                child_path = f"{path}.{name}" if path else name
-                nodes.extend(self._collect_nodes(child, child_path))
-            # Also include the container itself if it's not the root
-            if path:
-                nodes.append((path, node))
-        else:
-            nodes.append((path, node))
-
-        return nodes
-
     def _get_nodes_in_order(self) -> Generator[tuple[str, BFBasicDataType], None, None]:
         """Yield nodes in the configured traversal order."""
         if self._traversal_order == TraversalOrder.BFS:
@@ -739,11 +786,42 @@ class BFMutatable:
         elif self._traversal_order == TraversalOrder.DFS_POSTORDER:
             yield from self._dfs_postorder_traverse()
 
+    def _traverse_node(
+        self, node: BFBasicDataType, path: str
+    ) -> Generator[tuple[str, BFBasicDataType], None, None]:
+        """Traverse a single node, handling special container types."""
+        if isinstance(node, BFLength):
+            # BFLength has a _data child that contains the actual children
+            if "_data" in node._children:
+                data_container = node._children["_data"]
+                for name, child in data_container._children.items():
+                    child_path = f"{path}.{name}" if path else name
+                    yield from self._traverse_node(child, child_path)
+        elif isinstance(node, (BFLengthRef, BFCallableRef)):
+            # These are leaf nodes with computed values from _field
+            # The _field is what we can mutate
+            if hasattr(node, "_field"):
+                yield (path, node._field)
+        elif isinstance(node, BFContainer):
+            for name, child in node._children.items():
+                child_path = f"{path}.{name}" if path else name
+                yield from self._traverse_node(child, child_path)
+        else:
+            yield (path, node)
+
     def _bfs_traverse(self) -> Generator[tuple[str, BFBasicDataType], None, None]:
         """Breadth-first traversal."""
         queue: deque[tuple[str, BFBasicDataType]] = deque()
 
-        if isinstance(self._root, BFContainer):
+        # Initialize queue based on root type
+        if isinstance(self._root, BFLength):
+            if "_data" in self._root._children:
+                for name, child in self._root._children["_data"]._children.items():
+                    queue.append((name, child))
+        elif isinstance(self._root, (BFLengthRef, BFCallableRef)):
+            if hasattr(self._root, "_field"):
+                queue.append(("", self._root._field))
+        elif isinstance(self._root, BFContainer):
             for name, child in self._root._children.items():
                 queue.append((name, child))
         else:
@@ -752,68 +830,56 @@ class BFMutatable:
         while queue:
             path, node = queue.popleft()
 
-            # Yield non-container nodes, or container nodes with mutatable fields
-            if not isinstance(node, BFContainer):
-                yield (path, node)
-            else:
-                # Add children to queue
+            if isinstance(node, BFLength):
+                if "_data" in node._children:
+                    for name, child in node._children["_data"]._children.items():
+                        child_path = f"{path}.{name}" if path else name
+                        queue.append((child_path, child))
+            elif isinstance(node, (BFLengthRef, BFCallableRef)):
+                if hasattr(node, "_field"):
+                    yield (path, node._field)
+            elif isinstance(node, BFContainer):
                 for name, child in node._children.items():
                     child_path = f"{path}.{name}" if path else name
                     queue.append((child_path, child))
+            else:
+                yield (path, node)
 
     def _dfs_preorder_traverse(
         self,
         node: Optional[BFBasicDataType] = None,
         path: str = "",
     ) -> Generator[tuple[str, BFBasicDataType], None, None]:
-        """Depth-first preorder traversal (process node before children)."""
+        """Depth-first preorder traversal."""
         if node is None:
             node = self._root
 
-        if isinstance(node, BFContainer):
-            for name, child in node._children.items():
-                child_path = f"{path}.{name}" if path else name
-                yield from self._dfs_preorder_traverse(child, child_path)
-        else:
-            yield (path, node)
+        yield from self._traverse_node(node, path)
 
     def _dfs_postorder_traverse(
         self,
         node: Optional[BFBasicDataType] = None,
         path: str = "",
     ) -> Generator[tuple[str, BFBasicDataType], None, None]:
-        """Depth-first postorder traversal (process children before node)."""
+        """Depth-first postorder traversal."""
         if node is None:
             node = self._root
 
-        if isinstance(node, BFContainer):
-            for name, child in node._children.items():
-                child_path = f"{path}.{name}" if path else name
-                yield from self._dfs_postorder_traverse(child, child_path)
-        else:
-            yield (path, node)
+        # For postorder, we still use the same traversal but conceptually
+        # children are processed before parents (which matters for containers)
+        yield from self._traverse_node(node, path)
 
     def _get_applicable_mutators(
         self,
         path: str,
         node: BFBasicDataType,
     ) -> Generator[BFMutator, None, None]:
-        """Get mutators that apply to a given node.
-
-        Args:
-            path: The node's path in the tree
-            node: The node instance
-
-        Yields:
-            Applicable mutator instances
-        """
+        """Get mutators that apply to a given node."""
         for binding in self._mutators:
-            # Check path restriction
             if binding.path is not None:
                 if binding.path != path and not path.endswith(f".{binding.path}"):
                     continue
 
-            # Check type compatibility
             if binding.mutator.can_mutate(node):
                 yield binding.mutator
 
@@ -823,25 +889,13 @@ class BFMutatable:
         node: BFBasicDataType,
         value: Any,
     ) -> bytes:
-        """Apply a mutation and return the full packed structure.
-
-        Args:
-            path: Path to the node being mutated
-            node: The node to mutate
-            value: The mutated value to apply
-
-        Returns:
-            Packed bytes of the entire structure with mutation applied
-        """
-        # Store original value
+        """Apply a mutation and return the full packed structure."""
         if hasattr(node, "value"):
             original = node.value
-            # Apply mutation
             try:
                 node.value = value
                 result = self._root.pack()
             finally:
-                # Restore original
                 node.value = original
             return result
         return self._root.pack()
@@ -854,48 +908,13 @@ class BFMutatable:
         """
         yield from self.iterate_mutations()
 
-    def iterate_mutations(
-        self,
-        order: Optional[TraversalOrder] = None,
-    ) -> Generator[MutationResult, None, None]:
-        """Iterate over all mutations with optional order override.
+    def total_count(self) -> int:
+        """Get total number of mutations without generating them.
 
-        Args:
-            order: Optional traversal order override
-
-        Yields:
-            MutationResult for each mutation
-        """
-        if order is not None:
-            original_order = self._traversal_order
-            self._traversal_order = order
-
-        try:
-            for path, node in self._get_nodes_in_order():
-                if not hasattr(node, "value"):
-                    continue
-
-                original_value = node.value
-
-                for mutator in self._get_applicable_mutators(path, node):
-                    for mutated_value, description in mutator.mutate(node):
-                        packed_data = self._apply_mutation(path, node, mutated_value)
-
-                        yield MutationResult(
-                            path=path,
-                            original_value=original_value,
-                            mutated_value=mutated_value,
-                            mutator_name=mutator.name,
-                            cwe_ids=mutator.cwe_ids,
-                            description=description,
-                            packed_data=packed_data,
-                        )
-        finally:
-            if order is not None:
-                self._traversal_order = original_order
-
-    def count_mutations(self) -> int:
-        """Count total number of mutations without generating them.
+        This is useful for:
+        - Progress tracking
+        - Determining how to split work across parallel processes
+        - Estimating completion time
 
         Returns:
             Total number of mutations that would be generated
@@ -905,11 +924,78 @@ class BFMutatable:
             if not hasattr(node, "value"):
                 continue
             for mutator in self._get_applicable_mutators(path, node):
-                if mutator.can_mutate(node):
-                    # We need to actually count mutations
-                    for _ in mutator.mutate(node):
-                        count += 1
+                for _ in mutator.mutate(node):
+                    count += 1
         return count
+
+    def iterate_mutations(
+        self,
+        order: Optional[TraversalOrder] = None,
+        start: int = 0,
+        limit: Optional[int] = None,
+    ) -> Generator[MutationResult, None, None]:
+        """Iterate over mutations with offset and limit support.
+
+        Args:
+            order: Optional traversal order override
+            start: Starting index (0-based). Skip this many mutations.
+            limit: Maximum number of mutations to yield. None = no limit.
+
+        Yields:
+            MutationResult for each mutation
+
+        Example:
+            # Process mutations 100-149 (50 total)
+            for result in mut.iterate_mutations(start=100, limit=50):
+                process(result)
+
+            # Resume from where we left off
+            for result in mut.iterate_mutations(start=150):
+                process(result)
+        """
+        if order is not None:
+            original_order = self._traversal_order
+            self._traversal_order = order
+
+        try:
+            current_index = 0
+            yielded_count = 0
+
+            for path, node in self._get_nodes_in_order():
+                if not hasattr(node, "value"):
+                    continue
+
+                original_value = node.value
+
+                for mutator in self._get_applicable_mutators(path, node):
+                    for mutated_value, description in mutator.mutate(node):
+                        # Check if we should skip this mutation
+                        if current_index < start:
+                            current_index += 1
+                            continue
+
+                        # Check if we've hit the limit
+                        if limit is not None and yielded_count >= limit:
+                            return
+
+                        packed_data = self._apply_mutation(path, node, mutated_value)
+
+                        yield MutationResult(
+                            index=current_index,
+                            path=path,
+                            original_value=original_value,
+                            mutated_value=mutated_value,
+                            mutator_name=mutator.name,
+                            metadata=mutator.metadata,
+                            description=description,
+                            packed_data=packed_data,
+                        )
+
+                        current_index += 1
+                        yielded_count += 1
+        finally:
+            if order is not None:
+                self._traversal_order = original_order
 
     def get_mutation_summary(self) -> dict[str, Any]:
         """Get a summary of the mutation configuration.
@@ -931,7 +1017,7 @@ class BFMutatable:
             "total_mutators": len(self._mutators),
             "traversal_order": self._traversal_order.name,
             "mutation_points": paths,
-            "estimated_mutations": self.count_mutations(),
+            "total_mutations": self.total_count(),
         }
 
 
@@ -980,6 +1066,8 @@ def mutate(
     bf_type: BFBasicDataType,
     mutators: Optional[list[BFMutator]] = None,
     order: TraversalOrder = TraversalOrder.DFS_PREORDER,
+    start: int = 0,
+    limit: Optional[int] = None,
 ) -> Generator[MutationResult, None, None]:
     """Convenience function to iterate mutations on a BitFactory type.
 
@@ -987,6 +1075,8 @@ def mutate(
         bf_type: The BitFactory type to mutate
         mutators: List of mutators to apply (defaults to full suite)
         order: Traversal order for nested structures
+        start: Starting index for resumption
+        limit: Maximum mutations to yield
 
     Yields:
         MutationResult for each mutation
@@ -997,4 +1087,4 @@ def mutate(
     for mutator in (mutators or create_full_mutator_suite()):
         wrapper.add_mutator(mutator)
 
-    yield from wrapper
+    yield from wrapper.iterate_mutations(start=start, limit=limit)
