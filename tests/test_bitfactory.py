@@ -4,7 +4,7 @@
 import pytest
 
 from bitfactory import *  # pylint: disable=W0401,W0614
-from bitfactory.exceptions import BFRangeException
+from bitfactory.exceptions import BFRangeException, BFTypeException
 
 
 class TestBFUInt8():
@@ -318,6 +318,46 @@ class TestBFCallableRef():
             b"\x11\x07\x00\x18\x03\x09\x00\x00\x00\xdd\xcc\xbb\xaa\x0a"
             == bf_test.pack()
         )
+
+
+class TestBFRefValidation():
+    """Test validation and error handling for ref classes"""
+
+    def test_invalid_container_ref_empty_string(self):
+        """Test that empty string container_ref raises BFTypeException"""
+        with pytest.raises(BFTypeException, match="container_ref must be a non-empty string"):
+            BFLengthRef(BFUInt16(), "")
+
+    def test_invalid_container_ref_none(self):
+        """Test that None container_ref raises BFTypeException"""
+        with pytest.raises(BFTypeException, match="container_ref must be a non-empty string"):
+            BFLengthRef(BFUInt16(), None)
+
+    def test_invalid_container_ref_non_string(self):
+        """Test that non-string container_ref raises BFTypeException"""
+        with pytest.raises(BFTypeException, match="container_ref must be a non-empty string"):
+            BFLengthRef(BFUInt16(), 123)
+
+    def test_invalid_func_not_callable(self):
+        """Test that non-callable func raises BFTypeException"""
+        with pytest.raises(BFTypeException, match="func must be callable"):
+            BFCallableRef(BFUInt16(), "not_a_function", "data")
+
+    def test_invalid_reference_path(self):
+        """Test that invalid reference path raises BFTypeException with helpful message"""
+        bf_test = BFContainer()
+        bf_test.len = BFLengthRef(BFUInt16(), "nonexistent_path")
+        bf_test.data = BFContainer()
+        with pytest.raises(BFTypeException, match="Invalid reference path.*nonexistent_path"):
+            bf_test.pack()
+
+    def test_invalid_nested_reference_path(self):
+        """Test that invalid nested reference path raises BFTypeException"""
+        bf_test = BFContainer()
+        bf_test.len = BFLengthRef(BFUInt16(), "valid.invalid_child")
+        bf_test.valid = BFContainer()
+        with pytest.raises(BFTypeException, match="Invalid reference path.*invalid_child"):
+            bf_test.pack()
 
 
 # class TestPrint():
