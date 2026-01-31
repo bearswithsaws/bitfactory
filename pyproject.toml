@@ -1,23 +1,36 @@
-[tool.poetry]
+[project]
 name = "bitfactory"
 version = "0.1.0"
 description = "Create structured binary data easily."
-authors = ["Nyz <nyz@bearswithsa.ws>"]
+authors = [{ name = "Nyz", email = "nyz@bearswithsa.ws" }]
+requires-python = ">=3.9,<4"
 readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 
-[tool.poetry.dependencies]
-python = "^3.9"
+[dependency-groups]
+dev = [
+    "pytest>=7.4.2,<8",
+    "pytest-cov>=4.1.0,<5",
+    "ruff>=0.4.0",
+    "mypy>=1.5.1,<2",
+]
 
+[tool.uv]
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.2"
-pytest-cov = "^4.1.0"
-ruff = ">=0.4.0"
-mypy = "^1.5.1"
+[tool.uv.build-backend]
+module-root = ""
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
 
 # Ruff configuration - replaces pylint, black, isort, flake8, etc.
 [tool.ruff]
