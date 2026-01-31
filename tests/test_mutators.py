@@ -1,6 +1,5 @@
 # pylint: disable=too-few-public-methods
 """BitFactory Mutators test suite"""
-import pytest
 
 from bitfactory import (
     BFBuffer,
@@ -25,7 +24,6 @@ from bitfactory.mutators import (
     BFIntegerSignMutator,
     BFIntegerSpecialValueMutator,
     BFMutatable,
-    BFMutator,
     MutationResult,
     TraversalOrder,
     create_buffer_mutator_suite,
@@ -283,7 +281,9 @@ class TestBFBitFlipMutator:
         mutator = BFBitFlipMutator()
         assert mutator.name == "Bit Flip Mutator"
         assert "bit-flip" in mutator.metadata["tags"]
-        assert "references" not in mutator.metadata or len(mutator.metadata.get("references", [])) == 0
+        assert (
+            "references" not in mutator.metadata or len(mutator.metadata.get("references", [])) == 0
+        )
 
     def test_uint8_bit_flips(self):
         """Test that UInt8 generates exactly 8 mutations"""
@@ -297,7 +297,7 @@ class TestBFBitFlipMutator:
 
         # Each mutation should flip exactly one bit
         original = 0xAA
-        for i, (value, desc) in enumerate(mutations):
+        for i, (value, _desc) in enumerate(mutations):
             expected = original ^ (1 << i)
             assert value == expected, f"Bit {i}: expected {expected}, got {value}"
 
@@ -320,7 +320,7 @@ class TestBFBitFlipMutator:
     def test_buffer_bit_flips(self):
         """Test buffer bit flips"""
         mutator = BFBitFlipMutator()
-        bf_val = BFBuffer(b"\xAA\x55")  # 2 bytes
+        bf_val = BFBuffer(b"\xaa\x55")  # 2 bytes
 
         mutations = list(mutator.mutate(bf_val))
 
@@ -330,8 +330,8 @@ class TestBFBitFlipMutator:
         # Check first byte mutations
         for i in range(8):
             value, desc = mutations[i]
-            expected = bytearray(b"\xAA\x55")
-            expected[0] ^= (1 << i)
+            expected = bytearray(b"\xaa\x55")
+            expected[0] ^= 1 << i
             assert value == bytes(expected)
 
     def test_bit_flip_description(self):
@@ -485,7 +485,7 @@ class TestBFMutatable:
 
         results = list(mut)
 
-        paths = set(r.path for r in results)
+        paths = {r.path for r in results}
         assert "header" in paths
         assert "size" in paths
         assert "data" in paths
@@ -505,7 +505,7 @@ class TestBFMutatable:
         mut.add_mutator(BFIntegerBoundaryMutator())
 
         results = list(mut)
-        paths = set(r.path for r in results)
+        paths = {r.path for r in results}
 
         assert "magic" in paths
         assert "sub.length" in paths
@@ -521,7 +521,7 @@ class TestBFMutatable:
         mut.add_mutator(BFIntegerBoundaryMutator(), path="field1")
 
         results = list(mut)
-        paths = set(r.path for r in results)
+        paths = {r.path for r in results}
 
         assert "field1" in paths
         assert "field2" not in paths
@@ -645,9 +645,7 @@ class TestIterationResumption:
 
         # All results should be covered
         all_indices = (
-            [r.index for r in worker1] +
-            [r.index for r in worker2] +
-            [r.index for r in worker3]
+            [r.index for r in worker1] + [r.index for r in worker2] + [r.index for r in worker3]
         )
 
         assert len(all_indices) == total
@@ -693,7 +691,7 @@ class TestBFLengthStructures:
         mut.add_mutator(BFIntegerBoundaryMutator())
 
         results = list(mut)
-        paths = set(r.path for r in results)
+        paths = {r.path for r in results}
 
         # Should traverse into the BFLength's data container
         assert "data.payload" in paths
@@ -729,7 +727,7 @@ class TestBFLengthRefStructures:
         mut.add_mutator(BFIntegerBoundaryMutator())
 
         results = list(mut)
-        paths = set(r.path for r in results)
+        paths = {r.path for r in results}
 
         # Should mutate the length field and the payload
         assert "length" in paths
@@ -756,6 +754,7 @@ class TestBFCallableRefStructures:
 
     def test_bfcallableref_traversal(self):
         """Test that BFCallableRef field is accessible for mutation"""
+
         def simple_checksum(data: bytes) -> int:
             return sum(data) & 0xFFFF
 
@@ -768,7 +767,7 @@ class TestBFCallableRefStructures:
         mut.add_mutator(BFIntegerBoundaryMutator())
 
         results = list(mut)
-        paths = set(r.path for r in results)
+        paths = {r.path for r in results}
 
         # Should mutate both the checksum field and the payload
         assert "checksum" in paths
@@ -776,6 +775,7 @@ class TestBFCallableRefStructures:
 
     def test_bfcallableref_packing(self):
         """Test that BFCallableRef mutations pack correctly"""
+
         def simple_checksum(data: bytes) -> int:
             return sum(data) & 0xFFFF
 
@@ -874,7 +874,7 @@ class TestConvenienceFunctions:
         results = list(mutate(container))
 
         assert len(results) > 0
-        paths = set(r.path for r in results)
+        paths = {r.path for r in results}
         assert "value" in paths
         assert "data" in paths
 
@@ -1006,7 +1006,7 @@ class TestIntegration:
         mut.add_mutator(BFBufferLengthMutator())
 
         results = list(mut)
-        paths = set(r.path for r in results)
+        paths = {r.path for r in results}
 
         assert "header.magic" in paths
         assert "header.version" in paths

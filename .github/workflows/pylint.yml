@@ -1,9 +1,9 @@
-name: Pylint
+name: Code Quality
 
 on: [push]
 
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -33,6 +33,9 @@ jobs:
     - run: poetry install --with dev --no-interaction --no-root
       if: steps.cache-deps.outputs.cache-hit != 'true'
     - run: poetry install --no-interaction
-    - name: Analyze with pylint
+    - name: Lint with Ruff
       run: |
-        poetry run pylint $(git ls-files '*.py')
+        poetry run ruff check .
+    - name: Check formatting with Ruff
+      run: |
+        poetry run ruff format --check .

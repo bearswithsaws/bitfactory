@@ -28,18 +28,18 @@ Metadata System:
 
 import abc
 from collections import deque
-from dataclasses import dataclass, field
+from collections.abc import Generator
+from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Callable, Generator, Optional, Union
+from typing import Any, Optional
 
 from .bitfactory import (
     BFBasicDataType,
     BFBuffer,
+    BFCallableRef,
     BFContainer,
     BFLength,
     BFLengthRef,
-    BFCallableRef,
-    BFRefBase,
     BFSInt8,
     BFSInt16,
     BFSInt32,
@@ -154,9 +154,7 @@ class BFMutator(abc.ABC):
         return isinstance(bf_type, self.supported_types)
 
     @abc.abstractmethod
-    def mutate(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[Any, str], None, None]:
+    def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         """Generate mutated values for the given type.
 
         Args:
@@ -207,9 +205,7 @@ class BFIntegerBoundaryMutator(BFMutator):
     def supported_types(self) -> tuple[type, ...]:
         return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32)
 
-    def _get_boundaries(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[int, str], None, None]:
+    def _get_boundaries(self, bf_type: BFBasicDataType) -> Generator[tuple[int, str], None, None]:
         """Generate boundary values based on type."""
         is_signed = isinstance(bf_type, (BFSInt8, BFSInt16, BFSInt32))
 
@@ -247,14 +243,11 @@ class BFIntegerBoundaryMutator(BFMutator):
             yield (max_val // 2, f"HALF_MAX_{bits} ({max_val // 2})")
             yield ((max_val // 2) + 1, f"HALF_MAX_{bits}+1 ({(max_val // 2) + 1})")
 
-    def mutate(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[Any, str], None, None]:
+    def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
-        for value, description in self._get_boundaries(bf_type):
-            yield (value, description)
+        yield from self._get_boundaries(bf_type)
 
 
 class BFIntegerSignMutator(BFMutator):
@@ -280,9 +273,7 @@ class BFIntegerSignMutator(BFMutator):
     def supported_types(self) -> tuple[type, ...]:
         return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32)
 
-    def mutate(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[Any, str], None, None]:
+    def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
@@ -340,9 +331,7 @@ class BFIntegerSpecialValueMutator(BFMutator):
     def supported_types(self) -> tuple[type, ...]:
         return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32)
 
-    def mutate(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[Any, str], None, None]:
+    def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
@@ -409,9 +398,7 @@ class BFIntegerBitPatternMutator(BFMutator):
     def supported_types(self) -> tuple[type, ...]:
         return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32)
 
-    def mutate(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[Any, str], None, None]:
+    def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
@@ -482,9 +469,7 @@ class BFBitFlipMutator(BFMutator):
     def supported_types(self) -> tuple[type, ...]:
         return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32, BFBuffer)
 
-    def mutate(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[Any, str], None, None]:
+    def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
@@ -495,11 +480,11 @@ class BFBitFlipMutator(BFMutator):
                 for bit_idx in range(8):
                     # Create a copy with one bit flipped
                     mutated = bytearray(original)
-                    mutated[byte_idx] ^= (1 << bit_idx)
+                    mutated[byte_idx] ^= 1 << bit_idx
                     yield (
                         bytes(mutated),
                         f"Flip bit {bit_idx} of byte {byte_idx} "
-                        f"(0x{original[byte_idx]:02X} -> 0x{mutated[byte_idx]:02X})"
+                        f"(0x{original[byte_idx]:02X} -> 0x{mutated[byte_idx]:02X})",
                     )
         else:
             # For integers, determine bit width
@@ -513,7 +498,10 @@ class BFBitFlipMutator(BFMutator):
             original = bf_type.value
             for bit_idx in range(bits):
                 mutated = original ^ (1 << bit_idx)
-                yield (mutated, f"Flip bit {bit_idx} (0x{original:X} -> 0x{mutated & ((1 << bits) - 1):X})")
+                yield (
+                    mutated,
+                    f"Flip bit {bit_idx} (0x{original:X} -> 0x{mutated & ((1 << bits) - 1):X})",
+                )
 
 
 # =============================================================================
@@ -552,12 +540,20 @@ class BFBufferLengthMutator(BFMutator):
             length_variations: List of length adjustments to apply
         """
         self._length_variations = length_variations or [
-            -1, 0, 1, 2, -2, 255, 256, 1024, 4096, 65535, 65536,
+            -1,
+            0,
+            1,
+            2,
+            -2,
+            255,
+            256,
+            1024,
+            4096,
+            65535,
+            65536,
         ]
 
-    def mutate(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[Any, str], None, None]:
+    def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
@@ -607,9 +603,7 @@ class BFBufferContentMutator(BFMutator):
     def supported_types(self) -> tuple[type, ...]:
         return (BFBuffer,)
 
-    def mutate(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[Any, str], None, None]:
+    def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
@@ -618,7 +612,7 @@ class BFBufferContentMutator(BFMutator):
         yield (b"\x00" * original_len, "All null bytes")
         yield (
             bf_type.value[:1] + b"\x00" + bf_type.value[2:] if len(bf_type.value) > 2 else b"\x00",
-            "Embedded null byte"
+            "Embedded null byte",
         )
 
         yield (b"\xff" * original_len, "All 0xFF bytes")
@@ -663,9 +657,7 @@ class BFBufferNullTerminationMutator(BFMutator):
     def supported_types(self) -> tuple[type, ...]:
         return (BFBuffer,)
 
-    def mutate(
-        self, bf_type: BFBasicDataType
-    ) -> Generator[tuple[Any, str], None, None]:
+    def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
@@ -681,7 +673,7 @@ class BFBufferNullTerminationMutator(BFMutator):
 
         if length > 2:
             mid = length // 2
-            yield (original[:mid] + b"\x00" + original[mid + 1:], "Null in middle")
+            yield (original[:mid] + b"\x00" + original[mid + 1 :], "Null in middle")
 
         yield (b"\x00" + original[1:] if length > 0 else b"\x00", "Null at start")
         yield (b"AAAA\x00BBBB", "Data after null terminator")
@@ -876,9 +868,12 @@ class BFMutatable:
     ) -> Generator[BFMutator, None, None]:
         """Get mutators that apply to a given node."""
         for binding in self._mutators:
-            if binding.path is not None:
-                if binding.path != path and not path.endswith(f".{binding.path}"):
-                    continue
+            if (
+                binding.path is not None
+                and binding.path != path
+                and not path.endswith(f".{binding.path}")
+            ):
+                continue
 
             if binding.mutator.can_mutate(node):
                 yield binding.mutator
@@ -1084,7 +1079,7 @@ def mutate(
     wrapper = BFMutatable(bf_type)
     wrapper.set_traversal_order(order)
 
-    for mutator in (mutators or create_full_mutator_suite()):
+    for mutator in mutators or create_full_mutator_suite():
         wrapper.add_mutator(mutator)
 
     yield from wrapper.iterate_mutations(start=start, limit=limit)

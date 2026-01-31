@@ -1,5 +1,4 @@
-"""BitFactory package
-"""
+"""BitFactory package"""
 
 import abc
 import binascii
@@ -280,7 +279,7 @@ class BFContainer(BFBasicDataType):
         return self
 
     def __getattribute__(self, name):
-        if name != "_children" and name in self._children.keys():
+        if name != "_children" and name in self._children:
             return self._children[name]
 
         return super().__getattribute__(name)
@@ -331,12 +330,7 @@ class BFContainer(BFBasicDataType):
             if isinstance(self._children[child], BFContainer):
                 ret += "|" + self._children[child].pretty_print(indent + 1)
             else:
-                ret += (
-                    "|"
-                    + self._children[child].pretty_print(indent + 1)
-                    + f" : {child} "
-                    + "\n"
-                )
+                ret += "|" + self._children[child].pretty_print(indent + 1) + f" : {child} " + "\n"
         return ret
 
 
@@ -349,7 +343,7 @@ class BFLength(BFContainer):
         self._children["_data"] = container
 
     def __getattribute__(self, name):
-        if name != "_children" and name in self._children["_data"]._children.keys():
+        if name != "_children" and name in self._children["_data"]._children:
             return self._children["_data"]._children[name]
 
         return super(BFContainer, self).__getattribute__(name)
@@ -394,9 +388,7 @@ class BFLength(BFContainer):
         for child in self._children["_data"]._children:
             logging.debug("current child: %s (%s)", child, indent)
             if isinstance(self._children["_data"]._children[child], BFContainer):
-                ret += "|" + self._children["_data"]._children[child].pretty_print(
-                    indent + 1
-                )
+                ret += "|" + self._children["_data"]._children[child].pretty_print(indent + 1)
             else:
                 ret += (
                     "|"

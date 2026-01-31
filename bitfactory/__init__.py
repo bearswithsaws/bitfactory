@@ -1,4 +1,5 @@
 """BitFactory Module imports"""
+
 from .bitfactory import (
     BFBasicDataType,
     BFBuffer,
