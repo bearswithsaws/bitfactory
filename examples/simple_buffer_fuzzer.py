@@ -16,7 +16,6 @@ Example:
 import argparse
 import subprocess
 import sys
-from typing import Optional
 
 from bitfactory import (
     BFBuffer,
@@ -84,9 +83,7 @@ def is_crash(return_code: int, baseline_code: int = 0) -> bool:
     if return_code > 128:
         return True
     # Any non-zero code different from baseline is suspicious
-    if return_code != baseline_code and return_code != 0:
-        return True
-    return False
+    return bool(return_code != baseline_code and return_code != 0)
 
 
 def print_crash_info(crash: CrashInfo) -> None:
@@ -129,13 +126,13 @@ def print_crash_info(crash: CrashInfo) -> None:
     print(f"Packed Data Length: {len(result.packed_data)} bytes")
 
     # Show hex dump of first 64 bytes
-    print(f"\nPacked Data (first 64 bytes):")
+    print("\nPacked Data (first 64 bytes):")
     hex_data = result.packed_data[:64].hex()
     for i in range(0, len(hex_data), 32):
         print(f"  {hex_data[i:i+32]}")
 
     if crash.stderr:
-        print(f"\nStderr Output:")
+        print("\nStderr Output:")
         stderr_text = crash.stderr.decode("utf-8", errors="replace")
         for line in stderr_text.split("\n")[:20]:  # Limit to first 20 lines
             print(f"  {line}")
@@ -176,13 +173,13 @@ def main():
     # Get total mutation count
     total_mutations = mutatable.total_count()
 
-    print(f"BitFactory Simple Buffer Fuzzer")
-    print(f"=" * 80)
+    print("BitFactory Simple Buffer Fuzzer")
+    print("=" * 80)
     print(f"Target Binary: {args.binary}")
     print(f"Initial Data: {args.initial_data!r}")
     print(f"Total Mutations: {total_mutations}")
     print(f"Timeout: {args.timeout}s")
-    print(f"=" * 80)
+    print("=" * 80)
     print()
 
     # Test the binary with baseline input first
