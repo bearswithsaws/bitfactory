@@ -445,10 +445,10 @@ class BFRefBase(BFContainer):
         for part in self._ref.split("."):
             try:
                 obj = obj._children[part]
-            except KeyError:
+            except KeyError as exc:
                 raise BFTypeException(
                     f"Invalid reference path: '{self._ref}' - component '{part}' not found"
-                )
+                ) from exc
         return obj
 
     @abc.abstractmethod

@@ -4,7 +4,7 @@
 import pytest
 
 from bitfactory import *  # pylint: disable=W0401,W0614
-from bitfactory.exceptions import BFRangeException
+from bitfactory.exceptions import BFRangeException, BFTypeException
 
 
 class TestBFUInt8():
@@ -325,31 +325,26 @@ class TestBFRefValidation():
 
     def test_invalid_container_ref_empty_string(self):
         """Test that empty string container_ref raises BFTypeException"""
-        from bitfactory.exceptions import BFTypeException
         with pytest.raises(BFTypeException, match="container_ref must be a non-empty string"):
             BFLengthRef(BFUInt16(), "")
 
     def test_invalid_container_ref_none(self):
         """Test that None container_ref raises BFTypeException"""
-        from bitfactory.exceptions import BFTypeException
         with pytest.raises(BFTypeException, match="container_ref must be a non-empty string"):
             BFLengthRef(BFUInt16(), None)
 
     def test_invalid_container_ref_non_string(self):
         """Test that non-string container_ref raises BFTypeException"""
-        from bitfactory.exceptions import BFTypeException
         with pytest.raises(BFTypeException, match="container_ref must be a non-empty string"):
             BFLengthRef(BFUInt16(), 123)
 
     def test_invalid_func_not_callable(self):
         """Test that non-callable func raises BFTypeException"""
-        from bitfactory.exceptions import BFTypeException
         with pytest.raises(BFTypeException, match="func must be callable"):
             BFCallableRef(BFUInt16(), "not_a_function", "data")
 
     def test_invalid_reference_path(self):
         """Test that invalid reference path raises BFTypeException with helpful message"""
-        from bitfactory.exceptions import BFTypeException
         bf_test = BFContainer()
         bf_test.len = BFLengthRef(BFUInt16(), "nonexistent_path")
         bf_test.data = BFContainer()
@@ -358,7 +353,6 @@ class TestBFRefValidation():
 
     def test_invalid_nested_reference_path(self):
         """Test that invalid nested reference path raises BFTypeException"""
-        from bitfactory.exceptions import BFTypeException
         bf_test = BFContainer()
         bf_test.len = BFLengthRef(BFUInt16(), "valid.invalid_child")
         bf_test.valid = BFContainer()
