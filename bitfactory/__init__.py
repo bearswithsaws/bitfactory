@@ -1,5 +1,6 @@
 """BitFactory Module imports"""
 from .bitfactory import (
+    BFBasicDataType,
     BFBuffer,
     BFCallableRef,
     BFContainer,
@@ -14,8 +15,28 @@ from .bitfactory import (
     BFUInt16,
     BFUInt32,
 )
+from .mutators import (
+    BFBufferContentMutator,
+    BFBufferLengthMutator,
+    BFBufferNullTerminationMutator,
+    BFIntegerBitPatternMutator,
+    BFIntegerBoundaryMutator,
+    BFIntegerSignMutator,
+    BFIntegerSpecialValueMutator,
+    BFMutatable,
+    BFMutator,
+    MutationResult,
+    MutatorBinding,
+    TraversalOrder,
+    create_buffer_mutator_suite,
+    create_full_mutator_suite,
+    create_integer_mutator_suite,
+    mutate,
+)
 
 __all__ = [
+    # Core types
+    "BFBasicDataType",
     "BFBuffer",
     "BFContainer",
     "BFEndian",
@@ -29,4 +50,24 @@ __all__ = [
     "BFUInt8",
     "BFUInt16",
     "BFUInt32",
+    # Mutator system
+    "BFMutator",
+    "BFMutatable",
+    "MutationResult",
+    "MutatorBinding",
+    "TraversalOrder",
+    # Integer mutators
+    "BFIntegerBoundaryMutator",
+    "BFIntegerSignMutator",
+    "BFIntegerSpecialValueMutator",
+    "BFIntegerBitPatternMutator",
+    # Buffer mutators
+    "BFBufferLengthMutator",
+    "BFBufferContentMutator",
+    "BFBufferNullTerminationMutator",
+    # Convenience functions
+    "create_integer_mutator_suite",
+    "create_buffer_mutator_suite",
+    "create_full_mutator_suite",
+    "mutate",
 ]
