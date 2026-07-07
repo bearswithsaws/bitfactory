@@ -111,8 +111,9 @@ class TestBFIntegerBoundaryMutator:
         mutator = BFIntegerBoundaryMutator()
         assert mutator.name == "Integer Boundary Mutator"
         assert "references" in mutator.metadata
-        assert BFUInt8 in mutator.supported_types
-        assert BFSInt32 in mutator.supported_types
+        assert mutator.applies_to_tags == frozenset({"integer"})
+        assert mutator.can_mutate(BFUInt8(0))
+        assert mutator.can_mutate(BFSInt32(0))
 
     def test_can_mutate(self):
         """Test type support checking"""
@@ -355,7 +356,8 @@ class TestBFBufferLengthMutator:
         refs = [r["id"] for r in mutator.metadata["references"]]
         assert "120" in refs
         assert "787" in refs
-        assert BFBuffer in mutator.supported_types
+        assert mutator.applies_to_tags == frozenset({"buffer"})
+        assert mutator.can_mutate(BFBuffer(b"test"))
 
     def test_can_mutate(self):
         """Test type support"""
