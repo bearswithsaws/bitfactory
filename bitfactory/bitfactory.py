@@ -56,6 +56,37 @@ class BFBasicDataType(abc.ABC):
         """Trait tags describing this field (used for mutator dispatch)."""
         return type(self).TAGS
 
+    # Every node can be placed in a container and can walk to the tree root.
+    # These live on the base (not just containers) so that leaf fields — in
+    # particular computed fields that reference other nodes — are first-class
+    # tree citizens. They default lazily to avoid requiring every __init__ to
+    # initialize them.
+
+    @property
+    def name(self):
+        """The field's name within its parent container (or None)."""
+        return getattr(self, "_name", None)
+
+    @name.setter
+    def name(self, name):
+        self._name = name
+
+    @property
+    def parent(self):
+        """The container this field was added to (or None for the root)."""
+        return getattr(self, "_parent", None)
+
+    @parent.setter
+    def parent(self, parent):
+        self._parent = parent
+
+    def root(self) -> "BFBasicDataType":
+        """Walk parent pointers to the top of the tree."""
+        node = self
+        while node.parent is not None:
+            node = node.parent
+        return node
+
     @abc.abstractmethod
     def pack(self) -> bytes:
         """Return the packed binary representation of this field."""
@@ -83,6 +114,9 @@ class BFBasicDataType(abc.ABC):
 
         @property
         def signed(self) -> bool: ...
+
+        @property
+        def length(self) -> int: ...
 
 
 class BFIntegerField(BFBasicDataType):
@@ -281,22 +315,6 @@ class BFContainer(BFBasicDataType):
         self._name = None
         self._parent = None
 
-    @property
-    def name(self):
-        return self._name
-
-    @name.setter
-    def name(self, name):
-        self._name = name
-
-    @property
-    def parent(self):
-        return self._parent
-
-    @parent.setter
-    def parent(self, parent):
-        self._parent = parent
-
     def add(self, name, obj):
         root = name
         obj._parent = self
@@ -333,6 +351,11 @@ class BFContainer(BFBasicDataType):
             self.add(name, obj)
         else:
             super().__setattr__(name, obj)
+
+    @property
+    def children(self) -> "list[BFBasicDataType]":
+        """The container's direct children, in insertion order."""
+        return list(self._children.values())
 
     def pack(self) -> bytes:
         return b"".join(child.pack() for child in self._children.values())
@@ -408,91 +431,125 @@ class BFLength(BFContainer):
         return ret
 
 
-class BFRefBase(BFContainer):
-    """Base for fields that compute their value from data elsewhere in the tree.
+class ComputeContext:
+    """Resolves referenced nodes for a computed field at pack time.
 
-    Subclasses implement :meth:`_compute_value` to turn the packed bytes of a
-    referenced container into an integer stored in ``_field``.
+    Passed to a :class:`BFComputed` function, it turns nodes elsewhere in the
+    structure into the bytes/value/length the computation needs. Targets are the
+    actual node objects (not string paths), so references are validated eagerly
+    and survive being embedded under a different parent.
+
+    A future ``offset(node)`` — the position of a node within the packed output —
+    slots in here without changing any of the following API.
     """
 
-    TAGS = frozenset({"reference"})
+    def __init__(self, origin: "BFComputed"):
+        self._origin = origin
 
-    def __init__(self, field: "BFIntegerField", container_ref: str):
-        super().__init__()
-        if not isinstance(container_ref, str) or not container_ref:
-            raise BFTypeException("container_ref must be a non-empty string")
+    def bytes(self, *targets: "BFBasicDataType") -> bytes:
+        """Packed bytes of one or more targets, concatenated in order."""
+        return b"".join(target.pack() for target in targets)
+
+    def value(self, target: "BFBasicDataType") -> Any:
+        """The resolved value of a target field."""
+        return target.value
+
+    def length(self, target: "BFBasicDataType") -> int:
+        """The packed length, in bytes, of a target."""
+        return len(target.pack())
+
+    def count(self, container: "BFContainer") -> int:
+        """The number of direct children of a container."""
+        return len(container.children)
+
+
+@register_type("computed")
+class BFComputed(BFBasicDataType):
+    """A leaf field whose value is computed from other regions of the structure.
+
+    ``fn(ctx)`` runs at pack time and returns the value stored in ``field``; the
+    :class:`ComputeContext` ``ctx`` resolves nodes referenced *by object* into
+    their bytes/value/length. This is a leaf — it holds no children — and can be
+    placed anywhere in the tree.
+
+    For the common cases prefer the helpers :func:`length_of`,
+    :func:`checksum_of`, and :func:`count_of`; drop to ``BFComputed`` directly
+    when you need custom arithmetic::
+
+        frame.crc = BFComputed(BFUInt32(), lambda ctx: crc32(ctx.bytes(hdr, body)))
+    """
+
+    TAGS = frozenset({"computed"})
+
+    def __init__(self, field: "BFBasicDataType", fn: Callable[[ComputeContext], Any]):
+        if not isinstance(field, BFBasicDataType):
+            raise BFTypeException("field must be a BitFactory type")
+        if not callable(fn):
+            raise BFTypeException("fn must be callable")
         self._field = field
-        self._ref = container_ref
+        self._fn = fn
 
-    def _get_root(self) -> "BFContainer":
-        """Navigate to the root of the container tree."""
-        obj = self
-        while obj.parent is not None:
-            obj = obj.parent
-        return obj
-
-    def _resolve_ref(self) -> "BFContainer":
-        """Resolve the reference path to the target container."""
-        obj = self._get_root()
-        for part in self._ref.split("."):
-            try:
-                obj = obj._children[part]
-            except KeyError as exc:
-                raise BFTypeException(
-                    f"Invalid reference path: '{self._ref}' - component '{part}' not found"
-                ) from exc
-        return obj
-
-    @abc.abstractmethod
-    def _compute_value(self, packed_data: bytes) -> int:
-        """Compute the field value from packed data."""
-
-    def pack(self) -> bytes:
-        target = self._resolve_ref()
-        self._field.value = self._compute_value(target.pack())
-        return self._field.pack()
+    def _compute(self) -> Any:
+        return self._fn(ComputeContext(self))
 
     @property  # type: ignore[misc]  # computed value is intentionally read-only
-    def value(self) -> int:
-        target = self._resolve_ref()
-        return self._compute_value(target.pack())
+    def value(self) -> Any:
+        return self._compute()
+
+    @property
+    def length(self) -> int:
+        return self._field.length
+
+    def pack(self) -> bytes:
+        self._field.value = self._compute()
+        return self._field.pack()
 
     def __str__(self) -> str:
         return self.pretty_print()
 
     def pretty_print(self, indent: int = 0) -> str:
-        return " " * indent + f"+{self.name} value: 0x{self.value:0x}\n"
+        val = self.value
+        shown = f"0x{val:0x}" if isinstance(val, int) else repr(val)
+        return " " * indent + "|= " + f"computed {shown}"
 
 
-@register_type("length_ref")
-class BFLengthRef(BFRefBase):
-    """Length field referencing a container elsewhere in the tree."""
-
-    TAGS = frozenset({"reference", "length"})
-
-    def _compute_value(self, packed_data: bytes) -> int:
-        return len(packed_data)
-
-    def pretty_print(self, indent: int = 0) -> str:
-        return " " * indent + f"+{self.name} length: 0x{self.value:0x}\n"
+def _validate_targets(targets: "tuple[BFBasicDataType, ...]") -> None:
+    for target in targets:
+        if not isinstance(target, BFBasicDataType):
+            raise BFTypeException("computed field targets must be BitFactory types")
 
 
-@register_type("callable_ref")
-class BFCallableRef(BFRefBase):
-    """Computed field applying a callable to a referenced container's bytes."""
+def length_of(field: "BFBasicDataType", *targets: "BFBasicDataType") -> BFComputed:
+    """A field holding the total packed length of ``targets`` (in bytes).
 
-    TAGS = frozenset({"reference", "callable"})
+    Pass more than one target to count a range without wrapping it in a
+    container: ``length_of(BFUInt16(), header, body)``.
+    """
+    _validate_targets(targets)
+    return BFComputed(field, lambda ctx: len(ctx.bytes(*targets)))
 
-    def __init__(
-        self, field: "BFIntegerField", func: Callable[[bytes], int], container_ref: str
-    ):
-        super().__init__(field, container_ref)
-        if not callable(func):
-            raise BFTypeException("func must be callable")
-        self._func = func
 
-    def _compute_value(self, packed_data: bytes) -> int:
-        return self._func(packed_data)
+def checksum_of(
+    field: "BFBasicDataType",
+    func: Callable[[bytes], Any],
+    *targets: "BFBasicDataType",
+) -> BFComputed:
+    """A field holding ``func`` applied to the packed bytes of ``targets``.
+
+    ``func`` receives the concatenated bytes of every target in order, so a
+    checksum can span a range of siblings directly.
+    """
+    if not callable(func):
+        raise BFTypeException("func must be callable")
+    _validate_targets(targets)
+    return BFComputed(field, lambda ctx: func(ctx.bytes(*targets)))
+
+
+def count_of(field: "BFBasicDataType", container: "BFContainer") -> BFComputed:
+    """A field holding the number of direct children of ``container``."""
+    if not isinstance(container, BFContainer):
+        raise BFTypeException("count_of target must be a BFContainer")
+    return BFComputed(field, lambda ctx: ctx.count(container))
 
 
 def main():

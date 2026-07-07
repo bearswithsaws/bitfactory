@@ -35,10 +35,9 @@ from typing import Any, Optional
 
 from .bitfactory import (
     BFBasicDataType,
-    BFCallableRef,
+    BFComputed,
     BFContainer,
     BFLength,
-    BFLengthRef,
 )
 from .registry import register_mutator
 
@@ -649,7 +648,7 @@ class BFMutatable:
     - Iteration offset and limit for resumption and parallelization
     - Multiple traversal orders (BFS, DFS)
     - Path-restricted mutators
-    - BFLength, BFLengthRef, and BFCallableRef structures
+    - BFLength and BFComputed structures
 
     Example:
         >>> container = BFContainer()
@@ -743,11 +742,10 @@ class BFMutatable:
                 for name, child in data_container._children.items():
                     child_path = f"{path}.{name}" if path else name
                     yield from self._traverse_node(child, child_path)
-        elif isinstance(node, (BFLengthRef, BFCallableRef)):
-            # These are leaf nodes with computed values from _field
-            # The _field is what we can mutate
-            if hasattr(node, "_field"):
-                yield (path, node._field)
+        elif isinstance(node, BFComputed):
+            # A computed field is a leaf whose value comes from _field; the
+            # _field is the concrete storage type we can traverse.
+            yield (path, node._field)
         elif isinstance(node, BFContainer):
             for name, child in node._children.items():
                 child_path = f"{path}.{name}" if path else name
@@ -764,9 +762,8 @@ class BFMutatable:
             if "_data" in self._root._children:
                 for name, child in self._root._children["_data"]._children.items():
                     queue.append((name, child))
-        elif isinstance(self._root, (BFLengthRef, BFCallableRef)):
-            if hasattr(self._root, "_field"):
-                queue.append(("", self._root._field))
+        elif isinstance(self._root, BFComputed):
+            queue.append(("", self._root._field))
         elif isinstance(self._root, BFContainer):
             for name, child in self._root._children.items():
                 queue.append((name, child))
@@ -781,9 +778,8 @@ class BFMutatable:
                     for name, child in node._children["_data"]._children.items():
                         child_path = f"{path}.{name}" if path else name
                         queue.append((child_path, child))
-            elif isinstance(node, (BFLengthRef, BFCallableRef)):
-                if hasattr(node, "_field"):
-                    yield (path, node._field)
+            elif isinstance(node, BFComputed):
+                yield (path, node._field)
             elif isinstance(node, BFContainer):
                 for name, child in node._children.items():
                     child_path = f"{path}.{name}" if path else name

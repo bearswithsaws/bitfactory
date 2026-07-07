@@ -239,41 +239,6 @@ class TestBFLength:
         assert bf_test.pack() == b"\x00\x05\xdd\xcc\xbb\xaa\x0a"
 
 
-class TestBFLengthRef:
-    """Test length-counted container"""
-
-    def test(self):
-        bf_test = BFContainer()
-        bf_test.len = BFLengthRef(BFUInt16(), "len_data")
-        bf_test.len_data = BFContainer()
-        bf_test.len_data.data = BFUInt32(value=0xAABBCCDD)
-        bf_test.len_data.data2 = BFUInt8(value=10)
-        # print(bf_test.pretty_print())
-        # print(bf_test.pack())
-        assert bf_test.pack() == b"\x05\x00\xdd\xcc\xbb\xaa\x0a"
-
-        bf_test = BFContainer()
-        bf_test.len = BFLengthRef(BFUInt16(endian=BFEndian.BIG), "len_data")
-        bf_test.len_data = BFContainer()
-        bf_test.len_data.data = BFUInt32(value=0xAABBCCDD)
-        bf_test.len_data.data2 = BFUInt8(value=10)
-        assert bf_test.pack() == b"\x00\x05\xdd\xcc\xbb\xaa\x0a"
-
-        bf_test = BFContainer()
-        bf_test.something = BFUInt8(value=0x11)
-        bf_test.sub1 = BFContainer()
-        bf_test.sub1.thing1 = BFUInt16(value=7)
-        bf_test.sub1.len = BFLengthRef(BFUInt16(), "sub1.sub2.len_data")
-        bf_test.sub1.thing2 = BFUInt32(value=9)
-        bf_test.sub1.sub2 = BFContainer()
-        bf_test.sub1.sub2.len_data = BFContainer()
-        bf_test.sub1.sub2.len_data.data = BFUInt32(value=0xAABBCCDD)
-        bf_test.sub1.sub2.len_data.data2 = BFUInt8(value=10)
-        # print(bf_test.pretty_print())
-        # print(bf_test.pack())
-        assert bf_test.pack() == b"\x11\x07\x00\x05\x00\x09\x00\x00\x00\xdd\xcc\xbb\xaa\x0a"
-
-
 def csum(data: bytes) -> int:
     checksum = 0
     for value in data:
@@ -281,79 +246,144 @@ def csum(data: bytes) -> int:
     return checksum
 
 
-class TestBFCallableRef:
-    """Test callable ref container"""
+class TestLengthOf:
+    """Test length_of computed field (object-referenced)"""
 
     def test(self):
         bf_test = BFContainer()
-        bf_test.len = BFCallableRef(BFUInt16(), csum, "csum_data")
-        bf_test.csum_data = BFContainer()
-        bf_test.csum_data.data = BFUInt32(value=0xAABBCCDD)
-        bf_test.csum_data.data2 = BFUInt8(value=10)
-        # print(bf_test.pretty_print())
-        # print(bf_test.pack())
+        len_data = BFContainer()
+        len_data.data = BFUInt32(value=0xAABBCCDD)
+        len_data.data2 = BFUInt8(value=10)
+        bf_test.len = length_of(BFUInt16(), len_data)
+        bf_test.len_data = len_data
+        assert bf_test.pack() == b"\x05\x00\xdd\xcc\xbb\xaa\x0a"
+
+        bf_test = BFContainer()
+        len_data = BFContainer()
+        len_data.data = BFUInt32(value=0xAABBCCDD)
+        len_data.data2 = BFUInt8(value=10)
+        bf_test.len = length_of(BFUInt16(endian=BFEndian.BIG), len_data)
+        bf_test.len_data = len_data
+        assert bf_test.pack() == b"\x00\x05\xdd\xcc\xbb\xaa\x0a"
+
+        # A computed field can reference a target nested elsewhere in the tree.
+        bf_test = BFContainer()
+        bf_test.something = BFUInt8(value=0x11)
+        bf_test.sub1 = BFContainer()
+        bf_test.sub1.thing1 = BFUInt16(value=7)
+        len_data = BFContainer()
+        len_data.data = BFUInt32(value=0xAABBCCDD)
+        len_data.data2 = BFUInt8(value=10)
+        bf_test.sub1.len = length_of(BFUInt16(), len_data)
+        bf_test.sub1.thing2 = BFUInt32(value=9)
+        bf_test.sub1.sub2 = BFContainer()
+        bf_test.sub1.sub2.len_data = len_data
+        assert bf_test.pack() == b"\x11\x07\x00\x05\x00\x09\x00\x00\x00\xdd\xcc\xbb\xaa\x0a"
+
+
+class TestChecksumOf:
+    """Test checksum_of computed field (object-referenced)"""
+
+    def test(self):
+        bf_test = BFContainer()
+        csum_data = BFContainer()
+        csum_data.data = BFUInt32(value=0xAABBCCDD)
+        csum_data.data2 = BFUInt8(value=10)
+        bf_test.len = checksum_of(BFUInt16(), csum, csum_data)
+        bf_test.csum_data = csum_data
         assert bf_test.pack() == b"\x18\x03\xdd\xcc\xbb\xaa\x0a"
 
         bf_test = BFContainer()
-        bf_test.len = BFCallableRef(BFUInt16(endian=BFEndian.BIG), csum, "csum_data")
-        bf_test.csum_data = BFContainer()
-        bf_test.csum_data.data = BFUInt32(value=0xAABBCCDD)
-        bf_test.csum_data.data2 = BFUInt8(value=10)
+        csum_data = BFContainer()
+        csum_data.data = BFUInt32(value=0xAABBCCDD)
+        csum_data.data2 = BFUInt8(value=10)
+        bf_test.len = checksum_of(BFUInt16(endian=BFEndian.BIG), csum, csum_data)
+        bf_test.csum_data = csum_data
         assert bf_test.pack() == b"\x03\x18\xdd\xcc\xbb\xaa\x0a"
 
         bf_test = BFContainer()
         bf_test.something = BFUInt8(value=0x11)
         bf_test.sub1 = BFContainer()
         bf_test.sub1.thing1 = BFUInt16(value=7)
-        bf_test.sub1.len = BFCallableRef(BFUInt16(), csum, "sub1.sub2.csum_data")
+        csum_data = BFContainer()
+        csum_data.data = BFUInt32(value=0xAABBCCDD)
+        csum_data.data2 = BFUInt8(value=10)
+        bf_test.sub1.len = checksum_of(BFUInt16(), csum, csum_data)
         bf_test.sub1.thing2 = BFUInt32(value=9)
         bf_test.sub1.sub2 = BFContainer()
-        bf_test.sub1.sub2.csum_data = BFContainer()
-        bf_test.sub1.sub2.csum_data.data = BFUInt32(value=0xAABBCCDD)
-        bf_test.sub1.sub2.csum_data.data2 = BFUInt8(value=10)
-        # print(bf_test.pretty_print())
-        # print(bf_test.pack())
+        bf_test.sub1.sub2.csum_data = csum_data
         assert bf_test.pack() == b"\x11\x07\x00\x18\x03\x09\x00\x00\x00\xdd\xcc\xbb\xaa\x0a"
 
+    def test_multi_target_range(self):
+        """A checksum can span a range of siblings without a wrapper container."""
+        bf_test = BFContainer()
+        bf_test.a = BFUInt16(value=0x1122, endian=BFEndian.BIG)
+        bf_test.b = BFUInt16(value=0x3344, endian=BFEndian.BIG)
+        bf_test.ck = checksum_of(BFUInt8(), csum, bf_test.a, bf_test.b)
+        # ck = 0x11+0x22+0x33+0x44 = 0xAA
+        assert bf_test.pack() == b"\x11\x22\x33\x44\xaa"
 
-class TestBFRefValidation:
-    """Test validation and error handling for ref classes"""
 
-    def test_invalid_container_ref_empty_string(self):
-        """Test that empty string container_ref raises BFTypeException"""
-        with pytest.raises(BFTypeException, match="container_ref must be a non-empty string"):
-            BFLengthRef(BFUInt16(), "")
+class TestEmbeddability:
+    """A referencing sub-structure keeps working after being reparented."""
 
-    def test_invalid_container_ref_none(self):
-        """Test that None container_ref raises BFTypeException"""
-        with pytest.raises(BFTypeException, match="container_ref must be a non-empty string"):
-            BFLengthRef(BFUInt16(), None)
+    def _build_tlv(self):
+        """A reusable length-prefixed record: [len][payload]."""
+        tlv = BFContainer()
+        payload = BFContainer()
+        payload.data = BFUInt32(value=0xAABBCCDD)
+        tlv.length = length_of(BFUInt8(), payload)
+        tlv.payload = payload
+        return tlv
 
-    def test_invalid_container_ref_non_string(self):
-        """Test that non-string container_ref raises BFTypeException"""
-        with pytest.raises(BFTypeException, match="container_ref must be a non-empty string"):
-            BFLengthRef(BFUInt16(), 123)
+    def test_same_bytes_at_root_and_when_nested(self):
+        # Object references resolve to the held node, not an absolute path, so
+        # the record packs identically standalone and when embedded deeper.
+        standalone = self._build_tlv()
+        assert standalone.pack() == b"\x04\xdd\xcc\xbb\xaa"
 
-    def test_invalid_func_not_callable(self):
-        """Test that non-callable func raises BFTypeException"""
+        outer = BFContainer()
+        outer.header = BFUInt8(value=0x01)
+        outer.record = self._build_tlv()
+        assert outer.pack() == b"\x01\x04\xdd\xcc\xbb\xaa"
+
+
+class TestCountOf:
+    """Test count_of computed field."""
+
+    def test(self):
+        bf_test = BFContainer()
+        items = BFContainer()
+        items.a = BFUInt8(value=0xAA)
+        items.b = BFUInt8(value=0xBB)
+        items.c = BFUInt8(value=0xCC)
+        bf_test.count = count_of(BFUInt8(), items)
+        bf_test.items = items
+        assert bf_test.pack() == b"\x03\xaa\xbb\xcc"
+
+
+class TestComputedValidation:
+    """Validation and error handling for computed fields."""
+
+    def test_fn_not_callable(self):
+        with pytest.raises(BFTypeException, match="fn must be callable"):
+            BFComputed(BFUInt16(), "not_a_function")
+
+    def test_field_not_bf_type(self):
+        with pytest.raises(BFTypeException, match="field must be a BitFactory type"):
+            BFComputed("not_a_field", lambda ctx: 0)
+
+    def test_checksum_func_not_callable(self):
         with pytest.raises(BFTypeException, match="func must be callable"):
-            BFCallableRef(BFUInt16(), "not_a_function", "data")
+            checksum_of(BFUInt16(), "not_a_function")
 
-    def test_invalid_reference_path(self):
-        """Test that invalid reference path raises BFTypeException with helpful message"""
-        bf_test = BFContainer()
-        bf_test.len = BFLengthRef(BFUInt16(), "nonexistent_path")
-        bf_test.data = BFContainer()
-        with pytest.raises(BFTypeException, match="Invalid reference path.*nonexistent_path"):
-            bf_test.pack()
+    def test_length_target_not_bf_type(self):
+        with pytest.raises(BFTypeException, match="targets must be BitFactory types"):
+            length_of(BFUInt16(), "not_a_node")
 
-    def test_invalid_nested_reference_path(self):
-        """Test that invalid nested reference path raises BFTypeException"""
-        bf_test = BFContainer()
-        bf_test.len = BFLengthRef(BFUInt16(), "valid.invalid_child")
-        bf_test.valid = BFContainer()
-        with pytest.raises(BFTypeException, match="Invalid reference path.*invalid_child"):
-            bf_test.pack()
+    def test_count_target_not_container(self):
+        with pytest.raises(BFTypeException, match="count_of target must be a BFContainer"):
+            count_of(BFUInt8(), BFUInt8())
 
 
 # class TestPrint():
