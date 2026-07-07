@@ -57,11 +57,13 @@ class TestBFUInt16:
         bf_test = BFUInt16(value=0x1234, endian=BFEndian.BIG)
         assert bf_test.pack() == b"\x12\x34"
 
+        # Raw bytes round-trip identically: the bytes you supply are the bytes
+        # packed, interpreted in the field's own endianness.
         bf_test = BFUInt16(value=b"\xbb\xaa", endian=BFEndian.LITTLE)
         assert bf_test.pack() == b"\xbb\xaa"
 
         bf_test = BFUInt16(value=b"\xbb\xaa", endian=BFEndian.BIG)
-        assert bf_test.pack() == b"\xaa\xbb"
+        assert bf_test.pack() == b"\xbb\xaa"
 
         bf_test = BFUInt16(value=1, endian=BFEndian.LITTLE)
         assert bf_test.pack() == b"\x01\x00"
@@ -90,7 +92,7 @@ class TestBFSInt16:
         assert bf_test.pack() == b"\xbb\x7f"
 
         bf_test = BFSInt16(value=b"\xbb\x7f", endian=BFEndian.BIG)
-        assert bf_test.pack() == b"\x7f\xbb"
+        assert bf_test.pack() == b"\xbb\x7f"
 
         with pytest.raises(BFRangeException):
             bf_test = BFSInt16(value=b"abcd")
@@ -116,7 +118,7 @@ class TestBFUInt32:
         assert bf_test.pack() == b"\xdd\xcc\xbb\xaa"
 
         bf_test = BFUInt32(value=b"\xdd\xcc\xbb\xaa", endian=BFEndian.BIG)
-        assert bf_test.pack() == b"\xaa\xbb\xcc\xdd"
+        assert bf_test.pack() == b"\xdd\xcc\xbb\xaa"
 
         with pytest.raises(BFRangeException):
             bf_test = BFUInt32(value=b"abcdef")

@@ -1,239 +1,280 @@
-"""BitFactory package"""
+"""BitFactory core types and containers.
+
+Field types carry their own metadata (bit width, signedness, tags) so that
+downstream tooling (mutators, discovery, pretty-printing) can be written once and
+work with any type, including third-party types registered via
+:mod:`bitfactory.registry`.
+"""
 
 import abc
 import binascii
 import logging
-import struct
 from collections import OrderedDict
 from enum import Enum
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from .exceptions import BFEndianException, BFRangeException, BFTypeException
+from .registry import register_type
+
+ByteOrder = Literal["little", "big"]
 
 
 class BFEndian(Enum):
-    """BFEndian
-
-    Args:
-        Enum (int): Endian
-    """
+    """Byte order for multi-byte fields."""
 
     LITTLE = 1
     BIG = 2
 
 
-class BFBasicDataType(abc.ABC):
-    """BFBasicDataType
+_ENDIAN_TO_STR: "dict[BFEndian, ByteOrder]" = {
+    BFEndian.LITTLE: "little",
+    BFEndian.BIG: "big",
+}
 
-    Abstract base class for all data types
+
+def _endian_str(endian: BFEndian) -> ByteOrder:
+    """Normalize a :class:`BFEndian` to ``int.to_bytes`` order string."""
+    try:
+        return _ENDIAN_TO_STR[endian]
+    except KeyError as exc:
+        raise BFEndianException(f"Unknown endianness: {endian!r}") from exc
+
+
+class BFBasicDataType(abc.ABC):
+    """Abstract base class for all field types.
+
+    Subclasses must implement :meth:`pack`. Every type exposes a ``tags`` set
+    used for trait-based dispatch (e.g. matching mutators to fields). By default
+    tags come from the class-level ``TAGS`` attribute; types whose tags depend on
+    instance/class metadata (integers) override the ``tags`` property.
     """
 
-    def __init__(self):
-        pass
+    TAGS: frozenset = frozenset()
 
     @property
-    def value(self):
-        pass
-
-    @value.setter
-    def value(self, value):
-        pass
+    def tags(self) -> frozenset:
+        """Trait tags describing this field (used for mutator dispatch)."""
+        return type(self).TAGS
 
     @abc.abstractmethod
-    def pack(self):
-        pass
+    def pack(self) -> bytes:
+        """Return the packed binary representation of this field."""
 
-    @property
-    def length(self):
-        pass
+    @abc.abstractmethod
+    def pretty_print(self, indent: int = 0) -> str:
+        """Return a human-readable, indented rendering of this field."""
+
+    if TYPE_CHECKING:
+        # These describe the optional field interface used by generic tooling
+        # (mutators, discovery). They are declared for the type checker only;
+        # concrete field types provide the real implementations at runtime.
+        # Declaring them here (rather than as real base properties) keeps them
+        # out of the runtime attribute namespace, so containers do not treat
+        # "value"/"bit_width"/"signed" as reserved child-field names.
+
+        @property
+        def value(self) -> Any: ...
+
+        @value.setter
+        def value(self, val: Any) -> None: ...
+
+        @property
+        def bit_width(self) -> int: ...
+
+        @property
+        def signed(self) -> bool: ...
 
 
-class BFUInt8(BFBasicDataType):
-    """Unsigned int 8-bit"""
+class BFIntegerField(BFBasicDataType):
+    """Base class for fixed-width integer fields.
 
-    def __init__(self, value=0):
-        self._fmt = "B"
-        self._width = 1
+    A concrete integer type is declared with just two class attributes::
+
+        @register_type("uint24")
+        class BFUInt24(BFIntegerField):
+            BYTE_WIDTH = 3
+            SIGNED = False
+
+    Width is arbitrary (24-bit and 64-bit types work with no special casing).
+    Values are stored masked to the unsigned width; two's-complement is handled
+    naturally at pack time, so signed and unsigned share one code path.
+    """
+
+    #: Width of the field in bytes. Subclasses must set this.
+    BYTE_WIDTH: int = 0
+    #: Whether the field is signed (affects display and mutator boundaries).
+    SIGNED: bool = False
+
+    #: Human-readable width nouns for pretty-printing.
+    _WIDTH_NOUNS = {1: "Byte", 2: "Short", 4: "Long", 8: "Quad"}
+
+    def __init__(self, value=0, endian: BFEndian = BFEndian.LITTLE):
+        if self.BYTE_WIDTH <= 0:
+            raise BFTypeException(
+                f"{type(self).__name__} must define a positive BYTE_WIDTH"
+            )
+        self._endian = _endian_str(endian)
+        self._mask = (1 << self.bit_width) - 1
         self.value = value
 
     @property
-    def value(self):
+    def bit_width(self) -> int:
+        """Width of the field in bits."""
+        return self.BYTE_WIDTH * 8
+
+    @property
+    def signed(self) -> bool:
+        """Whether the field is signed."""
+        return self.SIGNED
+
+    @property
+    def tags(self) -> frozenset:
+        return frozenset(
+            {
+                "integer",
+                "scalar",
+                "signed" if self.SIGNED else "unsigned",
+                f"width:{self.bit_width}",
+            }
+        )
+
+    @property
+    def value(self) -> int:
         return self._value
 
     @value.setter
-    def value(self, val):
+    def value(self, val) -> None:
+        if isinstance(val, bool):
+            # bool is an int subclass; reject to avoid surprising coercion.
+            raise BFTypeException(f"{type(self).__name__} value must be int or bytes")
         if isinstance(val, int):
-            self._value = val & 0xFF
-        elif isinstance(val, bytes):
-            if len(val) > 1:
-                raise BFRangeException
-            self._value = ord(val)
+            self._value = val & self._mask
+        elif isinstance(val, (bytes, bytearray)):
+            if len(val) > self.BYTE_WIDTH:
+                raise BFRangeException(
+                    f"{type(self).__name__} accepts at most {self.BYTE_WIDTH} bytes, "
+                    f"got {len(val)}"
+                )
+            self._value = int.from_bytes(bytes(val), self._endian) & self._mask
         else:
-            raise BFTypeException
-
-    def pack(self):
-        return struct.pack(self._fmt, self._value)
+            raise BFTypeException(f"{type(self).__name__} value must be int or bytes")
 
     @property
-    def length(self):
-        return self._width
+    def length(self) -> int:
+        return self.BYTE_WIDTH
 
-    def __str__(self):
+    def pack(self) -> bytes:
+        return self._value.to_bytes(self.BYTE_WIDTH, self._endian)
+
+    def __str__(self) -> str:
         return self.pretty_print()
 
-    def pretty_print(self, indent=0):
-        return " " * indent + "|- " + f"Unsigned Byte 0x{self.value:02X}"
+    def pretty_print(self, indent: int = 0) -> str:
+        noun = self._WIDTH_NOUNS.get(self.BYTE_WIDTH, f"{self.BYTE_WIDTH}-byte")
+        sign = "Signed" if self.SIGNED else "Unsigned"
+        digits = self.BYTE_WIDTH * 2
+        return " " * indent + "|- " + f"{sign} {noun} 0x{self.value:0{digits}X}"
 
 
-class BFSInt8(BFUInt8):
-    """Signed int 8-bit"""
+@register_type("uint8")
+class BFUInt8(BFIntegerField):
+    """Unsigned 8-bit integer."""
 
-    def __init__(self, **kwargs):
-        self._fmt = "b"
-        super().__init__(**kwargs)
-
-    def pretty_print(self, indent=0):
-        return " " * indent + "|- " + f"Signed Byte 0x{self.value:02X}"
+    BYTE_WIDTH = 1
+    SIGNED = False
 
 
-class BFUInt16(BFBasicDataType):
-    """Unsigned int 16-bit"""
+@register_type("sint8")
+class BFSInt8(BFIntegerField):
+    """Signed 8-bit integer."""
 
-    def __init__(self, value=0, endian=BFEndian.LITTLE):
-        if endian == BFEndian.LITTLE:
-            self._endian = "<"
-        elif endian == BFEndian.BIG:
-            self._endian = ">"
-        else:
-            raise BFEndianException
-        self._fmt = "H"
-        self._width = 2
-        self.value = value
-
-    @property
-    def value(self):
-        return self._value
-
-    @value.setter
-    def value(self, val):
-        if isinstance(val, int):
-            self._value = val & 0xFFFF
-        else:
-            if len(val) > 2:
-                raise BFRangeException
-            self._value = struct.unpack("@" + self._fmt, val)[0]
-
-    def pack(self):
-        return struct.pack(self._endian + self._fmt, self.value)
-
-    @property
-    def length(self):
-        return self._width
-
-    def __str__(self):
-        return self.pretty_print()
-
-    def pretty_print(self, indent=0):
-        return " " * indent + "|- " + f"Unsigned Short 0x{self.value:04X}"
+    BYTE_WIDTH = 1
+    SIGNED = True
 
 
-class BFSInt16(BFUInt16):
-    """docstring for BFSInt16"""
+@register_type("uint16")
+class BFUInt16(BFIntegerField):
+    """Unsigned 16-bit integer."""
 
-    def __init__(self, **kwargs):
-        self._fmt = "h"
-        super().__init__(**kwargs)
-
-    def pretty_print(self, indent=0):
-        return " " * indent + "|- " + f"Signed Short 0x{self.value:04X}"
+    BYTE_WIDTH = 2
+    SIGNED = False
 
 
-class BFUInt32(BFBasicDataType):
-    """Unsigned int 32-bit"""
+@register_type("sint16")
+class BFSInt16(BFIntegerField):
+    """Signed 16-bit integer."""
 
-    def __init__(self, value=0, endian=BFEndian.LITTLE):
-        if endian == BFEndian.LITTLE:
-            self._endian = "<"
-        elif endian == BFEndian.BIG:
-            self._endian = ">"
-        else:
-            raise BFEndianException
-        self._fmt = "I"
-        self._width = 4
-        self.value = value
-
-    @property
-    def value(self):
-        return self._value
-
-    @value.setter
-    def value(self, val):
-        if isinstance(val, int):
-            self._value = val & 0xFFFFFFFF
-        else:
-            if len(val) > 4:
-                raise BFRangeException
-            self._value = struct.unpack("@" + self._fmt, val)[0]
-
-    def pack(self):
-        return struct.pack(self._endian + self._fmt, self.value)
-
-    @property
-    def length(self):
-        return self._width
-
-    def __str__(self):
-        return self.pretty_print()
-
-    def pretty_print(self, indent=0):
-        return " " * indent + "|- " + f"Unsigned Long 0x{self.value:08X}"
+    BYTE_WIDTH = 2
+    SIGNED = True
 
 
-class BFSInt32(BFUInt32):
-    """docstring for BFSInt32"""
+@register_type("uint32")
+class BFUInt32(BFIntegerField):
+    """Unsigned 32-bit integer."""
 
-    def __init__(self, **kwargs):
-        self._fmt = "i"
-        super().__init__(**kwargs)
-
-    def pretty_print(self, indent=0):
-        return " " * indent + "|- " + f"Signed Long 0x{self.value:08X}"
+    BYTE_WIDTH = 4
+    SIGNED = False
 
 
+@register_type("sint32")
+class BFSInt32(BFIntegerField):
+    """Signed 32-bit integer."""
+
+    BYTE_WIDTH = 4
+    SIGNED = True
+
+
+@register_type("buffer")
 class BFBuffer(BFBasicDataType):
-    """Buffer data type"""
+    """Variable-length byte buffer."""
+
+    TAGS = frozenset({"buffer", "bytes"})
 
     def __init__(self, value=b""):
-        self._value = value
-        self._width = len(self._value)
+        self.value = value
 
     @property
-    def length(self):
-        return self._width
+    def length(self) -> int:
+        return len(self._value)
 
-    def pack(self):
-        return self.value
+    def pack(self) -> bytes:
+        return self._value
 
     @property
-    def value(self):
+    def value(self) -> bytes:
         return self._value
 
     @value.setter
-    def value(self, val):
-        if isinstance(val, bytes):
-            self._value = val
+    def value(self, val) -> None:
+        if isinstance(val, (bytes, bytearray)):
+            self._value = bytes(val)
         else:
-            raise BFTypeException("BFBuffer must be type: bytes")
+            raise BFTypeException("BFBuffer value must be bytes")
 
-    def pretty_print(self, indent=0):
+    def __str__(self) -> str:
+        return self.pretty_print()
+
+    def pretty_print(self, indent: int = 0) -> str:
         short_val = str(binascii.hexlify(self.pack()))
         if self.length > 10:
             short_val = str(binascii.hexlify(self.pack()[:10])) + "..."
         return " " * indent + "|- " + f"Buffer {short_val}"
 
 
-# is a container a basic data type or its own thing?
+@register_type("container")
 class BFContainer(BFBasicDataType):
-    """docstring for BFContainer"""
+    """Ordered collection of named child fields.
+
+    Children may be assigned with attribute syntax
+    (``container.field = BFUInt8()``) or via :meth:`add` with dotted paths.
+    Attribute names that collide with an existing attribute or method of the
+    container class (``pack``, ``name``, ``parent``, ``add``, ``tags``, and
+    ``value`` on containers that define it) are rejected, so children can never
+    shadow methods. Common protocol field names such as ``length`` remain
+    usable.
+    """
+
+    TAGS = frozenset({"container"})
 
     def __init__(self):
         self._children = OrderedDict()
@@ -266,147 +307,117 @@ class BFContainer(BFBasicDataType):
         logging.debug("%s : %s", root, sub_container)
         logging.debug("Adding %s to %s (sub: %s)", type(obj), root, sub_container)
         if root is not None and sub_container is None and isinstance(obj, BFContainer):
-            logging.debug("SETTING NAME!!! %s", sub_container)
             obj.name = root
         if root in iter(self._children) and sub_container is not None:
-            # Recurse
-            logging.debug("%s in children for this container", root)
+            # Recurse into the existing sub-container.
             self._children[root].add(sub_container, obj)
         else:
-            logging.debug("New child, Setting %s to %s", root, obj)
             self._children[root] = obj
 
         return self
 
-    def __getattribute__(self, name):
-        if name != "_children" and name in self._children:
-            return self._children[name]
-
-        return super().__getattribute__(name)
+    def __getattr__(self, name):
+        # __getattr__ is only consulted when normal attribute lookup fails, so
+        # real methods/attributes always win over children of the same name.
+        children = self.__dict__.get("_children")
+        if children is not None and name in children:
+            return children[name]
+        raise AttributeError(name)
 
     def __setattr__(self, name, obj):
-        if isinstance(obj, BFBasicDataType) and not name.startswith(
-            "_"
-        ):  # Or whatever a container is?
-            logging.debug("SETTER: %s", name)
+        if isinstance(obj, BFBasicDataType) and not name.startswith("_"):
+            if hasattr(type(self), name):
+                raise BFTypeException(
+                    f"{name!r} is reserved and cannot be used as a field name"
+                )
             self.add(name, obj)
         else:
             super().__setattr__(name, obj)
 
-    @property
-    def length(self):
-        return len(repr(self))
+    def pack(self) -> bytes:
+        return b"".join(child.pack() for child in self._children.values())
 
-    # Does value make sense? Does this show we need another basic class type?
-    # @property
-    # def value(self, value):
-    #     pass
-
-    def _get_children(self):
-        """Returns a copy of its children"""
-        return list(iter(self._children.values()))[:]
-
-    def pack(self):
-        data = b""
-        children = self._get_children()
-        while len(children):
-            child = children.pop()
-            if isinstance(child, BFBasicDataType):
-                data = child.pack() + data
-            else:
-                data = repr(child) + data
-        return data
-
-    # def __str__( self ):
-    #    return binascii.hexlify( repr( self ) )
-
-    def __str__(self):
+    def __str__(self) -> str:
         return self.pretty_print()
 
-    def pretty_print(self, indent=0):
+    def pretty_print(self, indent: int = 0) -> str:
         ret = " " * indent + f"+{self.name}\n"
         for child in self._children:
-            logging.debug("current child: %s (%s)", child, indent)
             if isinstance(self._children[child], BFContainer):
                 ret += "|" + self._children[child].pretty_print(indent + 1)
             else:
-                ret += "|" + self._children[child].pretty_print(indent + 1) + f" : {child} " + "\n"
+                ret += (
+                    "|" + self._children[child].pretty_print(indent + 1) + f" : {child} " + "\n"
+                )
         return ret
 
 
+@register_type("length")
 class BFLength(BFContainer):
-    """Length counted container"""
+    """Container prefixed by a length field covering its packed children."""
 
-    def __init__(self, field, container):
+    TAGS = frozenset({"container", "length"})
+
+    def __init__(self, field: "BFIntegerField", container: "BFContainer"):
         super().__init__()
         self._field = field
         self._children["_data"] = container
 
-    def __getattribute__(self, name):
-        if name != "_children" and name in self._children["_data"]._children:
-            return self._children["_data"]._children[name]
-
-        return super(BFContainer, self).__getattribute__(name)
+    def __getattr__(self, name):
+        children = self.__dict__.get("_children")
+        if children is not None and "_data" in children:
+            data_children = children["_data"].__dict__.get("_children")
+            if data_children is not None and name in data_children:
+                return data_children[name]
+        raise AttributeError(name)
 
     def __setattr__(self, name, obj):
         if isinstance(obj, BFBasicDataType) and not name.startswith("_"):
+            if hasattr(type(self), name):
+                raise BFTypeException(
+                    f"{name!r} is reserved and cannot be used as a field name"
+                )
             self.add("_data." + name, obj)
         else:
             super(BFContainer, self).__setattr__(name, obj)
 
-    def pack(self):
-        data = b""
-        children = self._get_children()
-        while len(children):
-            child = children.pop()
-            if isinstance(child, BFBasicDataType):
-                data = child.pack() + data
-            else:
-                data = repr(child) + data
-
+    def pack(self) -> bytes:
+        data: bytes = self._children["_data"].pack()
         self._field.value = len(data)
         return self._field.pack() + data
 
-    @property
-    def value(self):
-        data = b""
-        children = self._get_children()
-        while len(children):
-            child = children.pop()
-            if isinstance(child, BFBasicDataType):
-                data = child.pack() + data
-            else:
-                data = repr(child) + data
+    @property  # type: ignore[misc]  # computed length is intentionally read-only
+    def value(self) -> int:
+        data = self._children["_data"].pack()
         self._field.value = len(data)
         return self._field.value
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.pretty_print()
 
-    def pretty_print(self, indent=0):
+    def pretty_print(self, indent: int = 0) -> str:
         ret = " " * indent + f"+{self.name} length: 0x{self.value:0x}\n"
-        for child in self._children["_data"]._children:
-            logging.debug("current child: %s (%s)", child, indent)
-            if isinstance(self._children["_data"]._children[child], BFContainer):
-                ret += "|" + self._children["_data"]._children[child].pretty_print(indent + 1)
+        data_children = self._children["_data"]._children
+        for child in data_children:
+            if isinstance(data_children[child], BFContainer):
+                ret += "|" + data_children[child].pretty_print(indent + 1)
             else:
                 ret += (
-                    "|"
-                    + self._children["_data"]._children[child].pretty_print(indent + 1)
-                    + f" : {child} "
-                    + "\n"
+                    "|" + data_children[child].pretty_print(indent + 1) + f" : {child} " + "\n"
                 )
         return ret
 
 
 class BFRefBase(BFContainer):
-    """Base class for reference-based computed fields.
+    """Base for fields that compute their value from data elsewhere in the tree.
 
-    This class provides common functionality for fields that compute their
-    value based on data referenced elsewhere in the container tree.
+    Subclasses implement :meth:`_compute_value` to turn the packed bytes of a
+    referenced container into an integer stored in ``_field``.
     """
 
-    def __init__(self, field, container_ref: str):
+    TAGS = frozenset({"reference"})
+
+    def __init__(self, field: "BFIntegerField", container_ref: str):
         super().__init__()
         if not isinstance(container_ref, str) or not container_ref:
             raise BFTypeException("container_ref must be a non-empty string")
@@ -414,25 +425,14 @@ class BFRefBase(BFContainer):
         self._ref = container_ref
 
     def _get_root(self) -> "BFContainer":
-        """Navigate to the root of the container tree.
-
-        Returns:
-            The root BFContainer of the tree.
-        """
+        """Navigate to the root of the container tree."""
         obj = self
         while obj.parent is not None:
             obj = obj.parent
         return obj
 
     def _resolve_ref(self) -> "BFContainer":
-        """Resolve the reference path to the target container.
-
-        Returns:
-            The container referenced by the path.
-
-        Raises:
-            BFTypeException: If the reference path is invalid.
-        """
+        """Resolve the reference path to the target container."""
         obj = self._get_root()
         for part in self._ref.split("."):
             try:
@@ -445,86 +445,53 @@ class BFRefBase(BFContainer):
 
     @abc.abstractmethod
     def _compute_value(self, packed_data: bytes) -> int:
-        """Compute the field value from packed data.
-
-        Args:
-            packed_data: The packed bytes from the referenced container.
-
-        Returns:
-            The computed integer value for the field.
-        """
+        """Compute the field value from packed data."""
 
     def pack(self) -> bytes:
         target = self._resolve_ref()
         self._field.value = self._compute_value(target.pack())
         return self._field.pack()
 
-    @property
+    @property  # type: ignore[misc]  # computed value is intentionally read-only
     def value(self) -> int:
         target = self._resolve_ref()
         return self._compute_value(target.pack())
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.pretty_print()
 
-    def pretty_print(self, indent=0):
+    def pretty_print(self, indent: int = 0) -> str:
         return " " * indent + f"+{self.name} value: 0x{self.value:0x}\n"
 
 
+@register_type("length_ref")
 class BFLengthRef(BFRefBase):
-    """Length field referencing an external container.
+    """Length field referencing a container elsewhere in the tree."""
 
-    Computes the length (in bytes) of the packed data from a referenced
-    container elsewhere in the tree.
-    """
+    TAGS = frozenset({"reference", "length"})
 
     def _compute_value(self, packed_data: bytes) -> int:
-        """Compute the length of the packed data.
-
-        Args:
-            packed_data: The packed bytes from the referenced container.
-
-        Returns:
-            The length of the packed data in bytes.
-        """
         return len(packed_data)
 
-    def pretty_print(self, indent=0):
+    def pretty_print(self, indent: int = 0) -> str:
         return " " * indent + f"+{self.name} length: 0x{self.value:0x}\n"
 
 
+@register_type("callable_ref")
 class BFCallableRef(BFRefBase):
-    """Computed field using a callable on an external container.
+    """Computed field applying a callable to a referenced container's bytes."""
 
-    Applies a user-provided function (e.g., checksum) to the packed data
-    from a referenced container elsewhere in the tree.
-    """
+    TAGS = frozenset({"reference", "callable"})
 
-    def __init__(self, field, func, container_ref: str):
-        """Initialize a BFCallableRef.
-
-        Args:
-            field: The numeric field type to hold the computed value.
-            func: A callable that takes bytes and returns an int.
-            container_ref: Path to the referenced container (e.g., "sub.data").
-
-        Raises:
-            BFTypeException: If func is not callable or container_ref is invalid.
-        """
+    def __init__(
+        self, field: "BFIntegerField", func: Callable[[bytes], int], container_ref: str
+    ):
         super().__init__(field, container_ref)
         if not callable(func):
             raise BFTypeException("func must be callable")
         self._func = func
 
     def _compute_value(self, packed_data: bytes) -> int:
-        """Compute the value by applying the function to packed data.
-
-        Args:
-            packed_data: The packed bytes from the referenced container.
-
-        Returns:
-            The result of applying the function to the packed data.
-        """
         return self._func(packed_data)
 
 
