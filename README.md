@@ -31,22 +31,49 @@ def csum(data: bytes) -> int:
 
 data = BFContainer()
 data.type = BFUInt8(1)
-data.body = BFLength(BFUInt16(endian=BFEndian.BIG), BFContainer())
-data.body.checksumed = BFContainer()
-data.body.checksumed.data = BFUInt32(0xAABBCCDD)
-data.body.checksumed.data2 = BFUInt8(10)
-data.body.checksum = BFCallableRef(BFUInt16(), csum, "checksumed")
-assert b"\x01\x00\x07\xdd\xcc\xbb\xaa\n\x18\x03" == data.pack()
+
+# Build the region that the length and checksum describe, then reference it.
+body = BFContainer()
+body.data = BFUInt32(0xAABBCCDD)
+body.data2 = BFUInt8(10)
+
+data.length = length_of(BFUInt16(endian=BFEndian.BIG), body)  # bytes in body
+data.body = body
+data.checksum = checksum_of(BFUInt16(), csum, body)           # csum over body
+
+assert b"\x01\x00\x05\xdd\xcc\xbb\xaa\n\x18\x03" == data.pack()
 
 >>> print(data)
 +None
 | |- Unsigned Byte 0x01 : type
-| +body length: 0x7
-|  +checksumed
-|   |- Unsigned Long 0xAABBCCDD : data
-|   |- Unsigned Byte 0x0A : data2
-|  +checksum value: 0x318
+| |= computed 0x5 : length
+| +body
+|  |- Unsigned Long 0xAABBCCDD : data
+|  |- Unsigned Byte 0x0A : data2
+| |= computed 0x318 : checksum
 ```
+
+## Computed fields (length, checksum, count, …)
+
+Real protocols are full of fields whose value depends on *other* parts of the
+structure — a length prefix over a region, a checksum, an element count. Model
+these with **computed fields**: you reference the target node(s) directly (by
+object, so it survives being reused or nested elsewhere), and the value is
+recomputed at pack time.
+
+```python
+frame.length   = length_of(BFUInt16(), body)              # length of a region
+frame.checksum = checksum_of(BFUInt16(), csum, hdr, body) # func over one or more regions
+frame.count    = count_of(BFUInt8(), items)               # number of children
+
+# Escape hatch for anything custom — a function of the tree:
+frame.crc = BFComputed(BFUInt32(), lambda ctx: crc32(ctx.bytes(hdr, body)))
+```
+
+`checksum_of`/`length_of` accept several targets, so a value can span a range of
+siblings without wrapping them in a container first. The `ctx` passed to a
+`BFComputed` function resolves referenced nodes with `ctx.bytes(...)`,
+`ctx.value(...)`, `ctx.length(...)`, and `ctx.count(...)`.
 
 # Writing your own type
 
