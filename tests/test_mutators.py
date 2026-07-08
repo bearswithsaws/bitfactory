@@ -737,7 +737,7 @@ class TestComputedLengthStructures:
         assert "data.payload" in paths
 
     def test_computed_packing(self):
-        """Mutations of a length_of structure pack to a valid length."""
+        """Mutations of a length_of structure pack to a valid size."""
         container = BFContainer()
         data = BFContainer()
         data.payload = BFUInt32(value=0x12345678)
@@ -749,15 +749,50 @@ class TestComputedLengthStructures:
 
         for result in mut:
             assert isinstance(result.packed_data, bytes)
-            # Length (2) + payload (4)
+            # Mutating the length value changes the two length bytes' content,
+            # not the total packed size: length (2) + payload (4).
             assert len(result.packed_data) == 6
+
+    def test_length_mutation_sticks(self):
+        """An injected length survives packing (length/data mismatch)."""
+        container = BFContainer()
+        data = BFContainer()
+        data.payload = BFUInt32(value=0x12345678)
+        container.length = length_of(BFUInt16(), data)  # correct length = 4
+        container.data = data
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        prefixes = {r.packed_data[:2] for r in mut if r.path == "length"}
+        # The mutator injects wrong lengths that are NOT recomputed away.
+        assert prefixes != {b"\x04\x00"}
+        assert b"\xff\xff" in prefixes  # 0xFFFF boundary value stuck
+
+        # Iterating leaves no side effect: a clean pack is correct again.
+        assert container.pack()[:2] == b"\x04\x00"
+
+    def test_length_mutable_opt_out(self):
+        """length_of(..., mutable=False) excludes the length from mutation."""
+        container = BFContainer()
+        data = BFContainer()
+        data.payload = BFUInt32(value=0xAABBCCDD)
+        container.length = length_of(BFUInt16(), data, mutable=False)
+        container.data = data
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        paths = {r.path for r in mut}
+        assert "length" not in paths
+        assert "data.payload" in paths
 
 
 class TestComputedChecksumStructures:
     """Test mutators with checksum_of computed-field structures"""
 
-    def test_computed_traversal(self):
-        """The computed checksum field and its target are both traversed."""
+    def test_checksum_field_not_mutated(self):
+        """A checksum field is excluded from mutation; its target is not."""
 
         def simple_checksum(data: bytes) -> int:
             return sum(data) & 0xFFFF
@@ -774,27 +809,31 @@ class TestComputedChecksumStructures:
         results = list(mut)
         paths = {r.path for r in results}
 
-        # Should traverse both the checksum field and the payload
-        assert "checksum" in paths
+        # The checksum must stay consistent, so it is not a mutation point;
+        # the payload it protects still is.
+        assert "checksum" not in paths
         assert "data.payload" in paths
 
-    def test_computed_packing(self):
-        """Mutations of a checksum_of structure pack correctly."""
+    def test_checksum_stays_consistent_across_mutations(self):
+        """Every mutation still packs a checksum matching its (mutated) data."""
 
         def simple_checksum(data: bytes) -> int:
             return sum(data) & 0xFFFF
 
         container = BFContainer()
         data = BFContainer()
-        data.value = BFUInt8(value=0x42)
-        container.csum = checksum_of(BFUInt16(), simple_checksum, data)
+        data.payload = BFUInt8(value=0x42)
+        container.checksum = checksum_of(BFUInt16(), simple_checksum, data)
         container.data = data
 
         mut = BFMutatable(container)
         mut.add_mutator(BFIntegerBoundaryMutator())
 
         for result in mut:
-            assert isinstance(result.packed_data, bytes)
+            packed = result.packed_data
+            # checksum (2, LE) prefixes the payload; it must equal sum(payload)
+            expected = simple_checksum(packed[2:]) & 0xFFFF
+            assert packed[:2] == expected.to_bytes(2, "little")
 
 
 class TestTraversalOrders:

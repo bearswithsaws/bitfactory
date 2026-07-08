@@ -8,8 +8,10 @@ from bitfactory import (
     BFUInt32,
     ComputeContext,
     checksum_of,
+    count_of,
     length_of,
 )
+from bitfactory.mutators import BFIntegerBoundaryMutator, BFMutatable
 
 
 class TestComputeContext:
@@ -97,3 +99,44 @@ class TestChecksumMultiTarget:
         frame.b = BFUInt8(0x20)
         frame.ck = checksum_of(BFUInt8(), add, frame.a, frame.b)
         assert frame.pack() == b"\x10\x20\x30"
+
+
+class TestMutability:
+    """Default mutability of the helper-built computed fields."""
+
+    def test_length_is_mutable_by_default(self):
+        body = BFContainer()
+        body.data = BFUInt8(0)
+        assert length_of(BFUInt8(), body).mutable is True
+
+    def test_checksum_and_count_are_not_mutable(self):
+        body = BFContainer()
+        body.data = BFUInt8(0)
+        assert checksum_of(BFUInt8(), sum, body).mutable is False
+        assert count_of(BFUInt8(), body).mutable is False
+
+    def test_raw_computed_defaults_not_mutable(self):
+        assert BFComputed(BFUInt8(), lambda ctx: 0).mutable is False
+
+    def test_count_of_is_skipped_by_mutators(self):
+        container = BFContainer()
+        items = BFContainer()
+        items.a = BFUInt8(1)
+        container.count = count_of(BFUInt8(), items)
+        container.items = items
+
+        mut = BFMutatable(container).add_mutator(BFIntegerBoundaryMutator())
+        paths = {r.path for r in mut}
+        assert "count" not in paths
+        assert "items.a" in paths
+
+    def test_count_of_can_opt_in_to_mutation(self):
+        container = BFContainer()
+        items = BFContainer()
+        items.a = BFUInt8(1)
+        container.count = count_of(BFUInt8(), items, mutable=True)
+        container.items = items
+
+        mut = BFMutatable(container).add_mutator(BFIntegerBoundaryMutator())
+        paths = {r.path for r in mut}
+        assert "count" in paths
