@@ -35,18 +35,11 @@ from typing import Any, Optional
 
 from .bitfactory import (
     BFBasicDataType,
-    BFBuffer,
-    BFCallableRef,
+    BFComputed,
     BFContainer,
     BFLength,
-    BFLengthRef,
-    BFSInt8,
-    BFSInt16,
-    BFSInt32,
-    BFUInt8,
-    BFUInt16,
-    BFUInt32,
 )
+from .registry import register_mutator
 
 
 class TraversalOrder(Enum):
@@ -107,9 +100,16 @@ class BFMutator(abc.ABC):
     Mutators generate sequences of values designed to test edge cases,
     boundary conditions, and potentially invalid states.
 
-    Subclasses must implement the `mutate` method and specify which
-    BF types they can mutate via `supported_types`.
+    Subclasses must implement the `mutate` method and declare which fields they
+    apply to via `applies_to_tags` — a set of trait tags a field must expose
+    (e.g. ``{"integer"}`` or ``{"buffer"}``). Because dispatch is trait-based
+    rather than tied to concrete classes, a mutator automatically works with any
+    third-party field type that advertises the matching tags, and integer
+    mutators read `bit_width`/`signed` to cover any width (8/16/24/32/64/...).
     """
+
+    #: Tags a field must have (superset match) for this mutator to apply.
+    applies_to_tags: frozenset = frozenset()
 
     @property
     @abc.abstractmethod
@@ -137,21 +137,20 @@ class BFMutator(abc.ABC):
             }
         """
 
-    @property
-    @abc.abstractmethod
-    def supported_types(self) -> tuple[type, ...]:
-        """Tuple of BFBasicDataType subclasses this mutator can handle."""
-
     def can_mutate(self, bf_type: BFBasicDataType) -> bool:
-        """Check if this mutator can handle the given type.
+        """Check if this mutator applies to the given field.
+
+        The default implementation matches when the field's tags are a superset
+        of `applies_to_tags`. Override for custom logic (e.g. matching any of
+        several tags).
 
         Args:
-            bf_type: A BitFactory type instance
+            bf_type: A BitFactory field instance
 
         Returns:
-            True if this mutator supports the type
+            True if this mutator supports the field
         """
-        return isinstance(bf_type, self.supported_types)
+        return self.applies_to_tags <= bf_type.tags
 
     @abc.abstractmethod
     def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
@@ -178,12 +177,15 @@ def _make_cwe_ref(cwe_id: str, name: str = "") -> dict[str, str]:
 # =============================================================================
 
 
+@register_mutator("integer_boundary", tags=frozenset({"integer"}))
 class BFIntegerBoundaryMutator(BFMutator):
     """Generates integer boundary values to test overflow/underflow conditions.
 
     This mutator produces values at and around the boundaries of integer
     types, targeting vulnerabilities like integer overflow and wraparound.
     """
+
+    applies_to_tags = frozenset({"integer"})
 
     @property
     def name(self) -> str:
@@ -201,22 +203,10 @@ class BFIntegerBoundaryMutator(BFMutator):
             "category": "integer-arithmetic",
         }
 
-    @property
-    def supported_types(self) -> tuple[type, ...]:
-        return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32)
-
     def _get_boundaries(self, bf_type: BFBasicDataType) -> Generator[tuple[int, str], None, None]:
-        """Generate boundary values based on type."""
-        is_signed = isinstance(bf_type, (BFSInt8, BFSInt16, BFSInt32))
-
-        if isinstance(bf_type, (BFUInt8, BFSInt8)):
-            bits = 8
-        elif isinstance(bf_type, (BFUInt16, BFSInt16)):
-            bits = 16
-        elif isinstance(bf_type, (BFUInt32, BFSInt32)):
-            bits = 32
-        else:
-            return
+        """Generate boundary values from the field's own width/signedness."""
+        bits = bf_type.bit_width
+        is_signed = bf_type.signed
 
         if is_signed:
             max_val = (1 << (bits - 1)) - 1
@@ -250,8 +240,11 @@ class BFIntegerBoundaryMutator(BFMutator):
         yield from self._get_boundaries(bf_type)
 
 
+@register_mutator("integer_sign", tags=frozenset({"integer"}))
 class BFIntegerSignMutator(BFMutator):
     """Tests sign-related integer vulnerabilities."""
+
+    applies_to_tags = frozenset({"integer"})
 
     @property
     def name(self) -> str:
@@ -269,22 +262,12 @@ class BFIntegerSignMutator(BFMutator):
             "category": "integer-conversion",
         }
 
-    @property
-    def supported_types(self) -> tuple[type, ...]:
-        return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32)
-
     def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
-        is_signed = isinstance(bf_type, (BFSInt8, BFSInt16, BFSInt32))
-
-        if isinstance(bf_type, (BFUInt8, BFSInt8)):
-            bits = 8
-        elif isinstance(bf_type, (BFUInt16, BFSInt16)):
-            bits = 16
-        else:
-            bits = 32
+        is_signed = bf_type.signed
+        bits = bf_type.bit_width
 
         sign_bit_set = 1 << (bits - 1)
         yield (sign_bit_set, f"Sign bit set (0x{sign_bit_set:X})")
@@ -308,8 +291,11 @@ class BFIntegerSignMutator(BFMutator):
                 yield (0x7FFF, "0x7FFF - max positive 16-bit")
 
 
+@register_mutator("integer_special_value", tags=frozenset({"integer"}))
 class BFIntegerSpecialValueMutator(BFMutator):
     """Generates special integer values that often cause issues."""
+
+    applies_to_tags = frozenset({"integer"})
 
     @property
     def name(self) -> str:
@@ -327,10 +313,6 @@ class BFIntegerSpecialValueMutator(BFMutator):
             "category": "integer-arithmetic",
         }
 
-    @property
-    def supported_types(self) -> tuple[type, ...]:
-        return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32)
-
     def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
@@ -338,12 +320,8 @@ class BFIntegerSpecialValueMutator(BFMutator):
         yield (0, "Zero (potential divide-by-zero)")
         yield (1, "One (off-by-one boundary)")
 
-        if isinstance(bf_type, (BFUInt8, BFSInt8)):
-            max_power = 7
-        elif isinstance(bf_type, (BFUInt16, BFSInt16)):
-            max_power = 15
-        else:
-            max_power = 31
+        bits = bf_type.bit_width
+        max_power = bits - 1
 
         for power in [2, 4, 8, 16]:
             if power <= max_power:
@@ -363,21 +341,17 @@ class BFIntegerSpecialValueMutator(BFMutator):
             (65536, "16-bit overflow"),
         ]
 
-        if isinstance(bf_type, (BFUInt8, BFSInt8)):
-            bits = 8
-        elif isinstance(bf_type, (BFUInt16, BFSInt16)):
-            bits = 16
-        else:
-            bits = 32
-
         max_val = (1 << bits) - 1
         for val, desc in common_sizes:
             if val <= max_val + 1:
                 yield (val, desc)
 
 
+@register_mutator("integer_bit_pattern", tags=frozenset({"integer"}))
 class BFIntegerBitPatternMutator(BFMutator):
     """Generates interesting bit patterns for testing."""
+
+    applies_to_tags = frozenset({"integer"})
 
     @property
     def name(self) -> str:
@@ -394,33 +368,20 @@ class BFIntegerBitPatternMutator(BFMutator):
             "category": "bit-manipulation",
         }
 
-    @property
-    def supported_types(self) -> tuple[type, ...]:
-        return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32)
-
     def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
-        if isinstance(bf_type, (BFUInt8, BFSInt8)):
-            bits = 8
-        elif isinstance(bf_type, (BFUInt16, BFSInt16)):
-            bits = 16
-        else:
-            bits = 32
+        bits = bf_type.bit_width
+        byte_width = bits // 8
 
         all_ones = (1 << bits) - 1
         yield (all_ones, f"All bits set (0x{all_ones:X})")
 
-        if bits == 8:
-            yield (0xAA, "Alternating bits 10101010")
-            yield (0x55, "Alternating bits 01010101")
-        elif bits == 16:
-            yield (0xAAAA, "Alternating bits 1010...")
-            yield (0x5555, "Alternating bits 0101...")
-        else:
-            yield (0xAAAAAAAA, "Alternating bits 1010...")
-            yield (0x55555555, "Alternating bits 0101...")
+        alt_hi = int.from_bytes(b"\xaa" * byte_width, "big")
+        alt_lo = int.from_bytes(b"\x55" * byte_width, "big")
+        yield (alt_hi, f"Alternating bits 1010... (0x{alt_hi:X})")
+        yield (alt_lo, f"Alternating bits 0101... (0x{alt_lo:X})")
 
         for i in range(min(bits, 8)):
             val = 1 << i
@@ -442,6 +403,7 @@ class BFIntegerBitPatternMutator(BFMutator):
             yield (0xFFFF0000, "High word set")
 
 
+@register_mutator("bit_flip", tags=frozenset({"integer", "buffer"}))
 class BFBitFlipMutator(BFMutator):
     """Flips individual bits in the value, one at a time.
 
@@ -465,15 +427,15 @@ class BFBitFlipMutator(BFMutator):
             "description": "Flips each bit individually to test error handling",
         }
 
-    @property
-    def supported_types(self) -> tuple[type, ...]:
-        return (BFUInt8, BFSInt8, BFUInt16, BFSInt16, BFUInt32, BFSInt32, BFBuffer)
+    def can_mutate(self, bf_type: BFBasicDataType) -> bool:
+        # Applies to either integers or buffers (an "any of" match).
+        return bool({"integer", "buffer"} & bf_type.tags)
 
     def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
             return
 
-        if isinstance(bf_type, BFBuffer):
+        if "buffer" in bf_type.tags:
             # For buffers, flip each bit in each byte
             original = bf_type.value
             for byte_idx in range(len(original)):
@@ -487,20 +449,13 @@ class BFBitFlipMutator(BFMutator):
                         f"(0x{original[byte_idx]:02X} -> 0x{mutated[byte_idx]:02X})",
                     )
         else:
-            # For integers, determine bit width
-            if isinstance(bf_type, (BFUInt8, BFSInt8)):
-                bits = 8
-            elif isinstance(bf_type, (BFUInt16, BFSInt16)):
-                bits = 16
-            else:
-                bits = 32
-
-            original = bf_type.value
+            bits = bf_type.bit_width
+            original_int = bf_type.value
             for bit_idx in range(bits):
-                mutated = original ^ (1 << bit_idx)
+                flipped = original_int ^ (1 << bit_idx)
                 yield (
-                    mutated,
-                    f"Flip bit {bit_idx} (0x{original:X} -> 0x{mutated & ((1 << bits) - 1):X})",
+                    flipped,
+                    f"Flip bit {bit_idx} (0x{original_int:X} -> 0x{flipped & ((1 << bits) - 1):X})",
                 )
 
 
@@ -509,8 +464,11 @@ class BFBitFlipMutator(BFMutator):
 # =============================================================================
 
 
+@register_mutator("buffer_length", tags=frozenset({"buffer"}))
 class BFBufferLengthMutator(BFMutator):
     """Generates buffer length edge cases."""
+
+    applies_to_tags = frozenset({"buffer"})
 
     @property
     def name(self) -> str:
@@ -528,10 +486,6 @@ class BFBufferLengthMutator(BFMutator):
             "tags": ["buffer", "length", "overflow"],
             "category": "buffer-handling",
         }
-
-    @property
-    def supported_types(self) -> tuple[type, ...]:
-        return (BFBuffer,)
 
     def __init__(self, length_variations: Optional[list[int]] = None):
         """Initialize with optional custom length variations.
@@ -579,8 +533,11 @@ class BFBufferLengthMutator(BFMutator):
                 yield (data, f"Boundary size {size} bytes")
 
 
+@register_mutator("buffer_content", tags=frozenset({"buffer"}))
 class BFBufferContentMutator(BFMutator):
     """Generates buffers with special content patterns."""
+
+    applies_to_tags = frozenset({"buffer"})
 
     @property
     def name(self) -> str:
@@ -598,10 +555,6 @@ class BFBufferContentMutator(BFMutator):
             "tags": ["buffer", "content", "injection"],
             "category": "injection-testing",
         }
-
-    @property
-    def supported_types(self) -> tuple[type, ...]:
-        return (BFBuffer,)
 
     def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
@@ -626,7 +579,7 @@ class BFBufferContentMutator(BFMutator):
             b"%p%p%p%p%p",
         ]
         for pattern in format_patterns:
-            yield (pattern, f"Format string: {pattern[:20]}")
+            yield (pattern, f"Format string: {pattern[:20]!r}")
 
         yield (b"A" * 1024, "Long A pattern (1024 bytes)")
         yield (b"A" * 4096, "Long A pattern (4096 bytes)")
@@ -635,8 +588,11 @@ class BFBufferContentMutator(BFMutator):
         yield (b"/../" * 50, "Path traversal pattern")
 
 
+@register_mutator("buffer_null_termination", tags=frozenset({"buffer"}))
 class BFBufferNullTerminationMutator(BFMutator):
     """Tests null termination handling in buffers."""
+
+    applies_to_tags = frozenset({"buffer"})
 
     @property
     def name(self) -> str:
@@ -652,10 +608,6 @@ class BFBufferNullTerminationMutator(BFMutator):
             "tags": ["buffer", "null-termination", "string"],
             "category": "string-handling",
         }
-
-    @property
-    def supported_types(self) -> tuple[type, ...]:
-        return (BFBuffer,)
 
     def mutate(self, bf_type: BFBasicDataType) -> Generator[tuple[Any, str], None, None]:
         if not self.can_mutate(bf_type):
@@ -695,7 +647,7 @@ class BFMutatable:
     - Iteration offset and limit for resumption and parallelization
     - Multiple traversal orders (BFS, DFS)
     - Path-restricted mutators
-    - BFLength, BFLengthRef, and BFCallableRef structures
+    - BFLength and BFComputed structures
 
     Example:
         >>> container = BFContainer()
@@ -789,10 +741,11 @@ class BFMutatable:
                 for name, child in data_container._children.items():
                     child_path = f"{path}.{name}" if path else name
                     yield from self._traverse_node(child, child_path)
-        elif isinstance(node, (BFLengthRef, BFCallableRef)):
-            # These are leaf nodes with computed values from _field
-            # The _field is what we can mutate
-            if hasattr(node, "_field"):
+        elif isinstance(node, BFComputed):
+            # A computed field is a leaf whose value comes from _field. Only a
+            # mutable one (e.g. a length) is a mutation point; non-mutable ones
+            # (checksums, counts) are skipped so their value stays consistent.
+            if node.mutable:
                 yield (path, node._field)
         elif isinstance(node, BFContainer):
             for name, child in node._children.items():
@@ -810,8 +763,8 @@ class BFMutatable:
             if "_data" in self._root._children:
                 for name, child in self._root._children["_data"]._children.items():
                     queue.append((name, child))
-        elif isinstance(self._root, (BFLengthRef, BFCallableRef)):
-            if hasattr(self._root, "_field"):
+        elif isinstance(self._root, BFComputed):
+            if self._root.mutable:
                 queue.append(("", self._root._field))
         elif isinstance(self._root, BFContainer):
             for name, child in self._root._children.items():
@@ -827,8 +780,8 @@ class BFMutatable:
                     for name, child in node._children["_data"]._children.items():
                         child_path = f"{path}.{name}" if path else name
                         queue.append((child_path, child))
-            elif isinstance(node, (BFLengthRef, BFCallableRef)):
-                if hasattr(node, "_field"):
+            elif isinstance(node, BFComputed):
+                if node.mutable:
                     yield (path, node._field)
             elif isinstance(node, BFContainer):
                 for name, child in node._children.items():
@@ -886,12 +839,20 @@ class BFMutatable:
     ) -> bytes:
         """Apply a mutation and return the full packed structure."""
         if hasattr(node, "value"):
+            # When the node is the storage field of a mutable computed field,
+            # freeze that field so pack() keeps the injected value instead of
+            # recomputing it (e.g. a length that disagrees with its data).
+            owner = getattr(node, "_computed_owner", None)
             original = node.value
             try:
+                if owner is not None:
+                    owner.freeze(True)
                 node.value = value
                 result = self._root.pack()
             finally:
                 node.value = original
+                if owner is not None:
+                    owner.freeze(False)
             return result
         return self._root.pack()
 
