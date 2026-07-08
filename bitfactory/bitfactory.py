@@ -51,6 +51,10 @@ class BFBasicDataType(abc.ABC):
 
     TAGS: frozenset = frozenset()
 
+    #: Set on the storage field of a mutable computed field so the mutation
+    #: engine can pause its owner's recomputation; None for ordinary fields.
+    _computed_owner: "BFComputed | None" = None
+
     @property
     def tags(self) -> frozenset:
         """Trait tags describing this field (used for mutator dispatch)."""
@@ -477,17 +481,51 @@ class BFComputed(BFBasicDataType):
     when you need custom arithmetic::
 
         frame.crc = BFComputed(BFUInt32(), lambda ctx: crc32(ctx.bytes(hdr, body)))
+
+    Mutability
+    ----------
+    A computed field whose value only *describes* other data — a length — is a
+    useful fuzzing target: injecting a value that disagrees with the data
+    (length/data mismatch) exercises a whole bug class. Such a field is created
+    ``mutable=True``: mutators may inject a value that *sticks* in the packed
+    output (see :meth:`freeze`). Fields whose value must stay self-consistent —
+    a checksum, an element count — are ``mutable=False`` (the default) and are
+    excluded from mutation entirely.
     """
 
     TAGS = frozenset({"computed"})
 
-    def __init__(self, field: "BFBasicDataType", fn: Callable[[ComputeContext], Any]):
+    def __init__(
+        self,
+        field: "BFBasicDataType",
+        fn: Callable[[ComputeContext], Any],
+        *,
+        mutable: bool = False,
+    ):
         if not isinstance(field, BFBasicDataType):
             raise BFTypeException("field must be a BitFactory type")
         if not callable(fn):
             raise BFTypeException("fn must be callable")
         self._field = field
         self._fn = fn
+        self._mutable = mutable
+        self._frozen = False
+        if mutable:
+            # Let a mutator that reaches the storage field freeze recomputation.
+            field._computed_owner = self
+
+    @property
+    def mutable(self) -> bool:
+        """Whether this field may be mutated (its injected value sticks)."""
+        return self._mutable
+
+    def freeze(self, frozen: bool = True) -> None:
+        """Pause/resume recomputation so an injected value survives a pack.
+
+        Used by the mutation engine: while frozen, :meth:`pack` packs whatever
+        value is currently in the storage field instead of recomputing it.
+        """
+        self._frozen = frozen
 
     def _compute(self) -> Any:
         return self._fn(ComputeContext(self))
@@ -501,7 +539,8 @@ class BFComputed(BFBasicDataType):
         return self._field.length
 
     def pack(self) -> bytes:
-        self._field.value = self._compute()
+        if not self._frozen:
+            self._field.value = self._compute()
         return self._field.pack()
 
     def __str__(self) -> str:
@@ -519,37 +558,47 @@ def _validate_targets(targets: "tuple[BFBasicDataType, ...]") -> None:
             raise BFTypeException("computed field targets must be BitFactory types")
 
 
-def length_of(field: "BFBasicDataType", *targets: "BFBasicDataType") -> BFComputed:
+def length_of(
+    field: "BFBasicDataType", *targets: "BFBasicDataType", mutable: bool = True
+) -> BFComputed:
     """A field holding the total packed length of ``targets`` (in bytes).
 
     Pass more than one target to count a range without wrapping it in a
     container: ``length_of(BFUInt16(), header, body)``.
+
+    Length fields are ``mutable`` by default so fuzzers can inject a length that
+    disagrees with the data; pass ``mutable=False`` to pin it.
     """
     _validate_targets(targets)
-    return BFComputed(field, lambda ctx: len(ctx.bytes(*targets)))
+    return BFComputed(field, lambda ctx: len(ctx.bytes(*targets)), mutable=mutable)
 
 
 def checksum_of(
     field: "BFBasicDataType",
     func: Callable[[bytes], Any],
     *targets: "BFBasicDataType",
+    mutable: bool = False,
 ) -> BFComputed:
     """A field holding ``func`` applied to the packed bytes of ``targets``.
 
     ``func`` receives the concatenated bytes of every target in order, so a
-    checksum can span a range of siblings directly.
+    checksum can span a range of siblings directly. Checksums must stay
+    consistent with their data, so they are ``mutable=False`` by default and are
+    excluded from mutation.
     """
     if not callable(func):
         raise BFTypeException("func must be callable")
     _validate_targets(targets)
-    return BFComputed(field, lambda ctx: func(ctx.bytes(*targets)))
+    return BFComputed(field, lambda ctx: func(ctx.bytes(*targets)), mutable=mutable)
 
 
-def count_of(field: "BFBasicDataType", container: "BFContainer") -> BFComputed:
+def count_of(
+    field: "BFBasicDataType", container: "BFContainer", *, mutable: bool = False
+) -> BFComputed:
     """A field holding the number of direct children of ``container``."""
     if not isinstance(container, BFContainer):
         raise BFTypeException("count_of target must be a BFContainer")
-    return BFComputed(field, lambda ctx: ctx.count(container))
+    return BFComputed(field, lambda ctx: ctx.count(container), mutable=mutable)
 
 
 def main():

@@ -75,6 +75,23 @@ siblings without wrapping them in a container first. The `ctx` passed to a
 `BFComputed` function resolves referenced nodes with `ctx.bytes(...)`,
 `ctx.value(...)`, `ctx.length(...)`, and `ctx.count(...)`.
 
+### Mutability
+
+When fuzzing (see the mutator suite), a computed field whose value only
+*describes* other data — a **length** — is a valuable target: injecting a length
+that disagrees with the data it counts (length/data mismatch) exercises a whole
+class of bugs. So `length_of` fields are **mutable by default** — a mutator can
+inject a value that *sticks* in the packed output. Fields that must stay
+self-consistent — a **checksum**, an element **count** — are **not** mutable and
+are excluded from mutation entirely (a forced-then-recomputed checksum would be
+meaningless). Override per field with `mutable=`:
+
+```python
+frame.length   = length_of(BFUInt16(), body)                 # fuzzable
+frame.length   = length_of(BFUInt16(), body, mutable=False)  # pinned
+frame.count    = count_of(BFUInt8(), items, mutable=True)    # opt in
+```
+
 # Writing your own type
 
 BitFactory types are registerable, like layers in Scapy. You can define a new

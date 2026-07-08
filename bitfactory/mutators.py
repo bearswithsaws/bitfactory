@@ -743,9 +743,11 @@ class BFMutatable:
                     child_path = f"{path}.{name}" if path else name
                     yield from self._traverse_node(child, child_path)
         elif isinstance(node, BFComputed):
-            # A computed field is a leaf whose value comes from _field; the
-            # _field is the concrete storage type we can traverse.
-            yield (path, node._field)
+            # A computed field is a leaf whose value comes from _field. Only a
+            # mutable one (e.g. a length) is a mutation point; non-mutable ones
+            # (checksums, counts) are skipped so their value stays consistent.
+            if node.mutable:
+                yield (path, node._field)
         elif isinstance(node, BFContainer):
             for name, child in node._children.items():
                 child_path = f"{path}.{name}" if path else name
@@ -763,7 +765,8 @@ class BFMutatable:
                 for name, child in self._root._children["_data"]._children.items():
                     queue.append((name, child))
         elif isinstance(self._root, BFComputed):
-            queue.append(("", self._root._field))
+            if self._root.mutable:
+                queue.append(("", self._root._field))
         elif isinstance(self._root, BFContainer):
             for name, child in self._root._children.items():
                 queue.append((name, child))
@@ -779,7 +782,8 @@ class BFMutatable:
                         child_path = f"{path}.{name}" if path else name
                         queue.append((child_path, child))
             elif isinstance(node, BFComputed):
-                yield (path, node._field)
+                if node.mutable:
+                    yield (path, node._field)
             elif isinstance(node, BFContainer):
                 for name, child in node._children.items():
                     child_path = f"{path}.{name}" if path else name
@@ -836,12 +840,20 @@ class BFMutatable:
     ) -> bytes:
         """Apply a mutation and return the full packed structure."""
         if hasattr(node, "value"):
+            # When the node is the storage field of a mutable computed field,
+            # freeze that field so pack() keeps the injected value instead of
+            # recomputing it (e.g. a length that disagrees with its data).
+            owner = getattr(node, "_computed_owner", None)
             original = node.value
             try:
+                if owner is not None:
+                    owner.freeze(True)
                 node.value = value
                 result = self._root.pack()
             finally:
                 node.value = original
+                if owner is not None:
+                    owner.freeze(False)
             return result
         return self._root.pack()
 
