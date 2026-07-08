@@ -3,16 +3,16 @@
 
 from bitfactory import (
     BFBuffer,
-    BFCallableRef,
     BFContainer,
     BFLength,
-    BFLengthRef,
     BFSInt8,
     BFSInt16,
     BFSInt32,
     BFUInt8,
     BFUInt16,
     BFUInt32,
+    checksum_of,
+    length_of,
 )
 from bitfactory.mutators import (
     BFBitFlipMutator,
@@ -111,8 +111,9 @@ class TestBFIntegerBoundaryMutator:
         mutator = BFIntegerBoundaryMutator()
         assert mutator.name == "Integer Boundary Mutator"
         assert "references" in mutator.metadata
-        assert BFUInt8 in mutator.supported_types
-        assert BFSInt32 in mutator.supported_types
+        assert mutator.applies_to_tags == frozenset({"integer"})
+        assert mutator.can_mutate(BFUInt8(0))
+        assert mutator.can_mutate(BFSInt32(0))
 
     def test_can_mutate(self):
         """Test type support checking"""
@@ -355,7 +356,8 @@ class TestBFBufferLengthMutator:
         refs = [r["id"] for r in mutator.metadata["references"]]
         assert "120" in refs
         assert "787" in refs
-        assert BFBuffer in mutator.supported_types
+        assert mutator.applies_to_tags == frozenset({"buffer"})
+        assert mutator.can_mutate(BFBuffer(b"test"))
 
     def test_can_mutate(self):
         """Test type support"""
@@ -713,15 +715,16 @@ class TestBFLengthStructures:
             assert len(result.packed_data) >= 2
 
 
-class TestBFLengthRefStructures:
-    """Test mutators with BFLengthRef structures"""
+class TestComputedLengthStructures:
+    """Test mutators with length_of computed-field structures"""
 
-    def test_bflengthref_traversal(self):
-        """Test that BFLengthRef field is accessible for mutation"""
+    def test_computed_traversal(self):
+        """The computed length field and its target are both traversed."""
         container = BFContainer()
-        container.length = BFLengthRef(BFUInt16(), "data")
-        container.data = BFContainer()
-        container.data.payload = BFUInt32(value=0xAABBCCDD)
+        data = BFContainer()
+        data.payload = BFUInt32(value=0xAABBCCDD)
+        container.length = length_of(BFUInt16(), data)
+        container.data = data
 
         mut = BFMutatable(container)
         mut.add_mutator(BFIntegerBoundaryMutator())
@@ -729,39 +732,76 @@ class TestBFLengthRefStructures:
         results = list(mut)
         paths = {r.path for r in results}
 
-        # Should mutate the length field and the payload
+        # Should traverse the length field and the payload
         assert "length" in paths
         assert "data.payload" in paths
 
-    def test_bflengthref_packing(self):
-        """Test that BFLengthRef mutations pack correctly"""
+    def test_computed_packing(self):
+        """Mutations of a length_of structure pack to a valid size."""
         container = BFContainer()
-        container.length = BFLengthRef(BFUInt16(), "data")
-        container.data = BFContainer()
-        container.data.payload = BFUInt32(value=0x12345678)
+        data = BFContainer()
+        data.payload = BFUInt32(value=0x12345678)
+        container.length = length_of(BFUInt16(), data)
+        container.data = data
 
         mut = BFMutatable(container)
         mut.add_mutator(BFIntegerBoundaryMutator())
 
         for result in mut:
             assert isinstance(result.packed_data, bytes)
-            # Length (2) + payload (4)
+            # Mutating the length value changes the two length bytes' content,
+            # not the total packed size: length (2) + payload (4).
             assert len(result.packed_data) == 6
 
+    def test_length_mutation_sticks(self):
+        """An injected length survives packing (length/data mismatch)."""
+        container = BFContainer()
+        data = BFContainer()
+        data.payload = BFUInt32(value=0x12345678)
+        container.length = length_of(BFUInt16(), data)  # correct length = 4
+        container.data = data
 
-class TestBFCallableRefStructures:
-    """Test mutators with BFCallableRef structures"""
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
 
-    def test_bfcallableref_traversal(self):
-        """Test that BFCallableRef field is accessible for mutation"""
+        prefixes = {r.packed_data[:2] for r in mut if r.path == "length"}
+        # The mutator injects wrong lengths that are NOT recomputed away.
+        assert prefixes != {b"\x04\x00"}
+        assert b"\xff\xff" in prefixes  # 0xFFFF boundary value stuck
+
+        # Iterating leaves no side effect: a clean pack is correct again.
+        assert container.pack()[:2] == b"\x04\x00"
+
+    def test_length_mutable_opt_out(self):
+        """length_of(..., mutable=False) excludes the length from mutation."""
+        container = BFContainer()
+        data = BFContainer()
+        data.payload = BFUInt32(value=0xAABBCCDD)
+        container.length = length_of(BFUInt16(), data, mutable=False)
+        container.data = data
+
+        mut = BFMutatable(container)
+        mut.add_mutator(BFIntegerBoundaryMutator())
+
+        paths = {r.path for r in mut}
+        assert "length" not in paths
+        assert "data.payload" in paths
+
+
+class TestComputedChecksumStructures:
+    """Test mutators with checksum_of computed-field structures"""
+
+    def test_checksum_field_not_mutated(self):
+        """A checksum field is excluded from mutation; its target is not."""
 
         def simple_checksum(data: bytes) -> int:
             return sum(data) & 0xFFFF
 
         container = BFContainer()
-        container.checksum = BFCallableRef(BFUInt16(), simple_checksum, "data")
-        container.data = BFContainer()
-        container.data.payload = BFUInt32(value=0xAABBCCDD)
+        data = BFContainer()
+        data.payload = BFUInt32(value=0xAABBCCDD)
+        container.checksum = checksum_of(BFUInt16(), simple_checksum, data)
+        container.data = data
 
         mut = BFMutatable(container)
         mut.add_mutator(BFIntegerBoundaryMutator())
@@ -769,26 +809,31 @@ class TestBFCallableRefStructures:
         results = list(mut)
         paths = {r.path for r in results}
 
-        # Should mutate both the checksum field and the payload
-        assert "checksum" in paths
+        # The checksum must stay consistent, so it is not a mutation point;
+        # the payload it protects still is.
+        assert "checksum" not in paths
         assert "data.payload" in paths
 
-    def test_bfcallableref_packing(self):
-        """Test that BFCallableRef mutations pack correctly"""
+    def test_checksum_stays_consistent_across_mutations(self):
+        """Every mutation still packs a checksum matching its (mutated) data."""
 
         def simple_checksum(data: bytes) -> int:
             return sum(data) & 0xFFFF
 
         container = BFContainer()
-        container.csum = BFCallableRef(BFUInt16(), simple_checksum, "data")
-        container.data = BFContainer()
-        container.data.value = BFUInt8(value=0x42)
+        data = BFContainer()
+        data.payload = BFUInt8(value=0x42)
+        container.checksum = checksum_of(BFUInt16(), simple_checksum, data)
+        container.data = data
 
         mut = BFMutatable(container)
         mut.add_mutator(BFIntegerBoundaryMutator())
 
         for result in mut:
-            assert isinstance(result.packed_data, bytes)
+            packed = result.packed_data
+            # checksum (2, LE) prefixes the payload; it must equal sum(payload)
+            expected = simple_checksum(packed[2:]) & 0xFFFF
+            assert packed[:2] == expected.to_bytes(2, "little")
 
 
 class TestTraversalOrders:

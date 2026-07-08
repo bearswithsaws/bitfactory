@@ -1,6 +1,6 @@
 [project]
 name = "bitfactory"
-version = "0.2.0"
+version = "0.3.0"
 description = "Create structured binary data easily."
 authors = [{ name = "Nyz", email = "nyz@bearswithsa.ws" }]
 requires-python = ">=3.9,<4"

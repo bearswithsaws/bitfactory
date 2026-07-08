@@ -1,20 +1,23 @@
-"""BitFactory Module imports"""
+"""BitFactory package public API."""
 
 from .bitfactory import (
     BFBasicDataType,
     BFBuffer,
-    BFCallableRef,
+    BFComputed,
     BFContainer,
     BFEndian,
+    BFIntegerField,
     BFLength,
-    BFLengthRef,
-    BFRefBase,
     BFSInt8,
     BFSInt16,
     BFSInt32,
     BFUInt8,
     BFUInt16,
     BFUInt32,
+    ComputeContext,
+    checksum_of,
+    count_of,
+    length_of,
 )
 from .mutators import (
     BFBitFlipMutator,
@@ -35,6 +38,22 @@ from .mutators import (
     create_integer_mutator_suite,
     mutate,
 )
+from .registry import (
+    get_mutator,
+    get_type,
+    list_mutators,
+    list_types,
+    load_plugins,
+    mutators_with_tag,
+    register_mutator,
+    register_type,
+    types_with_tag,
+)
+
+# Discover and register any types/mutators contributed by installed plugin
+# packages via entry points (see bitfactory.registry). Safe to call at import:
+# individual plugin failures are logged and skipped.
+load_plugins()
 
 __all__ = [
     # Core types
@@ -42,16 +61,29 @@ __all__ = [
     "BFBuffer",
     "BFContainer",
     "BFEndian",
+    "BFIntegerField",
     "BFLength",
-    "BFLengthRef",
-    "BFCallableRef",
-    "BFRefBase",
+    "BFComputed",
+    "ComputeContext",
+    "length_of",
+    "checksum_of",
+    "count_of",
     "BFSInt8",
     "BFSInt16",
     "BFSInt32",
     "BFUInt8",
     "BFUInt16",
     "BFUInt32",
+    # Registry / extensibility
+    "register_type",
+    "register_mutator",
+    "get_type",
+    "get_mutator",
+    "list_types",
+    "list_mutators",
+    "types_with_tag",
+    "mutators_with_tag",
+    "load_plugins",
     # Mutator system
     "BFMutator",
     "BFMutatable",
