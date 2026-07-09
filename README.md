@@ -162,3 +162,46 @@ type and mutator declared under these groups. Discovery helpers
 enumerate what is available.
 
 See `examples/custom_type_plugin.py` for a runnable end-to-end demonstration.
+
+# Protocol Buffers (extension)
+
+`bitfactory.protobuf` is an optional extension that models the Google Protocol
+Buffers wire format as BitFactory types. It is also a worked example of the
+registry, computed fields, and mutator systems working together, so it is a good
+next read after the sections above. It covers all four wire types:
+
+| Wire | Types | BitFactory field |
+|------|-------|------------------|
+| 0 VARINT | uint32/64, bool, enum | `BFVarint` |
+| 0 VARINT | int32/64 (two's complement) | `BFSignedVarint` |
+| 0 VARINT | sint32/64 (zigzag) | `BFZigZagVarint` |
+| 1 I64 | double | `BFProtoDouble` (fixed64 ints: little-endian `BFUInt*`) |
+| 2 LEN | string / bytes / embedded message | `BFProtoString` / `BFBuffer` / `BFProtoMessage` |
+| 5 I32 | float | `BFProtoFloat` (fixed32 ints: little-endian `BFUInt*`) |
+
+The module is **not** imported by `import bitfactory`; opt in explicitly (or let
+entry-point discovery register the types once the package is installed):
+
+```python
+from bitfactory.protobuf import BFProtoMessage, BFVarint, BFProtoString
+
+person = BFProtoMessage()
+person.add_field(1, BFVarint(150))          # field 1, varint
+person.add_field(2, BFProtoString("Ada"))   # field 2, length-delimited
+
+friend = BFProtoMessage()
+friend.add_field(1, BFVarint(2))
+person.add_field(5, friend)                 # nested message (length-delimited)
+
+person.pack()  # -> b'\x08\x96\x01\x12\x03Ada\x2a\x02\x08\x02'
+```
+
+`BFProtoField` pairs a tag key with a payload and, for length-delimited fields,
+adds the varint length prefix as a **mutable** `length_of` computed field — so a
+fuzzer injects length/data mismatches for free. Varints advertise the
+`"integer"` trait, so the existing integer mutators fuzz them automatically while
+the structural tag key (`BFProtoKey`) is left well-formed. BitFactory is a
+serializer, so this implements protobuf *encoding*; the bytes are valid on the
+wire and any conformant decoder can read them.
+
+See `examples/protobuf_message.py` for a runnable end-to-end demonstration.

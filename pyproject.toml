@@ -1,6 +1,6 @@
 [project]
 name = "bitfactory"
-version = "0.3.0"
+version = "0.4.0"
 description = "Create structured binary data easily."
 authors = [{ name = "Nyz", email = "nyz@bearswithsa.ws" }]
 requires-python = ">=3.9,<4"
@@ -14,6 +14,21 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
+
+# Protobuf extension types (bitfactory/protobuf.py) advertised as plugins.
+# Once the package is installed, bitfactory.load_plugins() discovers these on
+# `import bitfactory`, so the types are registry-visible without the base
+# package importing the optional module directly.
+[project.entry-points."bitfactory.types"]
+proto_varint = "bitfactory.protobuf:BFVarint"
+proto_signed_varint = "bitfactory.protobuf:BFSignedVarint"
+proto_zigzag_varint = "bitfactory.protobuf:BFZigZagVarint"
+proto_float = "bitfactory.protobuf:BFProtoFloat"
+proto_double = "bitfactory.protobuf:BFProtoDouble"
+proto_string = "bitfactory.protobuf:BFProtoString"
+proto_key = "bitfactory.protobuf:BFProtoKey"
+proto_field = "bitfactory.protobuf:BFProtoField"
+proto_message = "bitfactory.protobuf:BFProtoMessage"
 
 [dependency-groups]
 dev = [
