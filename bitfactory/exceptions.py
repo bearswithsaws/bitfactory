@@ -1,34 +1,21 @@
-"""BitFactory Exceptions"""
+"""BitFactory exceptions.
+
+All library errors derive from :class:`BFException`, so callers can catch every
+BitFactory-specific failure with a single ``except BFException``.
+"""
 
 
-class BFRangeException(Exception):
-    """BFRangeException
-
-    Args:
-        Exception: Out of range
-    """
-
-    def __init__(self, *args, **kwargs):
-        Exception.__init__(self, *args, **kwargs)
+class BFException(Exception):
+    """Base class for all BitFactory exceptions."""
 
 
-class BFEndianException(Exception):
-    """BFEndianException
-
-    Args:
-        Exception: BFEndianException
-    """
-
-    def __init__(self, *args, **kwargs):
-        Exception.__init__(self, *args, **kwargs)
+class BFRangeException(BFException):
+    """A value is out of range for its field."""
 
 
-class BFTypeException(Exception):
-    """BFTypeException
+class BFEndianException(BFException):
+    """An unknown or invalid byte order was supplied."""
 
-    Args:
-        Exception: BFTypeException
-    """
 
-    def __init__(self, *args, **kwargs):
-        Exception.__init__(self, *args, **kwargs)
+class BFTypeException(BFException):
+    """A value or field has an unexpected type."""

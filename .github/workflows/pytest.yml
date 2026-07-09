@@ -10,14 +10,18 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Test across the full supported range, including the minimum (3.9), so
+        # version-specific regressions are caught rather than only on 3.11.
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
-      # If you wanted to use multiple Python versions, you'd have specify a matrix in the job and
-      # reference the matrixe python version here.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       # Install uv - a fast Python package installer and resolver
       - name: Install uv
@@ -25,14 +29,14 @@ jobs:
         with:
           enable-cache: true
 
-      # Cache dependencies based on uv.lock. uv automatically caches the virtual environment
-      # and package downloads, making subsequent runs very fast.
+      # Cache dependencies based on the Python version and uv.lock. The version
+      # is part of the key so each interpreter gets its own virtualenv.
       - name: cache deps
         id: cache-deps
         uses: actions/cache@v4
         with:
           path: .venv
-          key: pydeps-${{ hashFiles('**/uv.lock') }}
+          key: pydeps-${{ matrix.python-version }}-${{ hashFiles('**/uv.lock') }}
 
       # Install dependencies using uv sync. This reads pyproject.toml and uv.lock,
       # creates a virtual environment, and installs all dependencies including dev dependencies.
@@ -45,10 +49,13 @@ jobs:
 
       # Run tests using uv run, which executes commands in the project's virtual environment.
       # uv run automatically activates the environment, so no need for source .venv/bin/activate
-      - run: uv run pytest -s -v --cov=bitfactory --cov-report xml
+      # Emit LCOV so the Coveralls action can consume it directly.
+      - run: uv run pytest -s -v --cov=bitfactory --cov-report=lcov:coverage.lcov
 
+      # Upload coverage once (from a single interpreter) to avoid duplicate reports.
       - name: Coveralls
+        if: matrix.python-version == '3.11'
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path-to-lcov: coverage.xml
+          file: coverage.lcov

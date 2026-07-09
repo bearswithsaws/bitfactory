@@ -1,17 +1,20 @@
 """Google Protocol Buffers wire types for BitFactory (extension layer).
 
-This module is an **optional extension** — importing :mod:`bitfactory` does not
-pull it in. Bring it into scope explicitly::
+This module is an **optional extension**: the ``bitfactory`` package does not
+re-export these types from its own namespace, so import them explicitly to use
+them directly::
 
     from bitfactory.protobuf import BFProtoMessage, BFVarint, BFProtoString
 
 Importing the module runs the ``@register_type`` decorators below, so after the
 import the types are also reachable through the registry
 (``get_type("proto_varint")``, ``types_with_tag("varint")``). When the package
-is installed, the entry points declared in ``pyproject.toml`` under the
-``bitfactory.types`` group let :func:`bitfactory.load_plugins` discover these
-types automatically — the "pip install a new protocol layer" experience the
-registry was designed for.
+is *installed*, the entry points declared in ``pyproject.toml`` under the
+``bitfactory.types`` group make :func:`bitfactory.load_plugins` import this
+module at ``import bitfactory`` time to register these types — the "pip install a
+new protocol layer" experience the registry was designed for. (In an
+un-installed source checkout that discovery step finds no entry points, so the
+module loads only on explicit import.)
 
 It doubles as an advanced tutorial for three parts of the BitFactory redesign:
 
@@ -135,6 +138,8 @@ class BFVarint(BFBasicDataType):
     BIT_WIDTH = 64
     #: Whether this varint carries a signed logical value (see subclasses).
     SIGNED = False
+    #: Display label used by :meth:`pretty_print` (overridden per subclass).
+    _LABEL = "Varint"
 
     def __init__(self, value: int = 0):
         self._mask = (1 << self.BIT_WIDTH) - 1
@@ -191,7 +196,7 @@ class BFVarint(BFBasicDataType):
         return self.pretty_print()
 
     def pretty_print(self, indent: int = 0) -> str:
-        return " " * indent + "|- " + f"Varint {self.value} (0x{self.value & _U64_MASK:x})"
+        return " " * indent + "|- " + f"{self._LABEL} {self.value} (0x{self.value & _U64_MASK:x})"
 
 
 @register_type("proto_signed_varint")
@@ -206,6 +211,7 @@ class BFSignedVarint(BFVarint):
 
     EXTRA_TAGS = frozenset({"varint", "signed-varint"})
     SIGNED = True
+    _LABEL = "SignedVarint"
 
     @property
     def value(self) -> int:
@@ -238,6 +244,7 @@ class BFZigZagVarint(BFVarint):
 
     EXTRA_TAGS = frozenset({"varint", "zigzag"})
     SIGNED = True
+    _LABEL = "ZigZagVarint"
 
     @property
     def value(self) -> int:
@@ -340,36 +347,42 @@ class BFProtoString(BFBasicDataType):
     """
 
     WIRE_TYPE = WIRE_LEN
-    TAGS = frozenset({"len", "string", "bytes"})
+    # "buffer" opts the payload into the variable-length buffer mutators
+    # (content/length/null-termination/bit-flip), so string content is fuzzed
+    # just like a BFBuffer — not only its length prefix.
+    TAGS = frozenset({"len", "string", "bytes", "buffer"})
 
     def __init__(self, value: str = ""):
         self.value = value
 
     @property
     def value(self) -> str:
-        return self._value
+        # Text view of the stored bytes. ``surrogateescape`` makes arbitrary
+        # (non-UTF-8) fuzz bytes injected by the mutators round-trip losslessly.
+        return self._raw.decode("utf-8", "surrogateescape")
 
     @value.setter
     def value(self, val) -> None:
         if isinstance(val, str):
-            self._value = val
+            self._raw = val.encode("utf-8", "surrogateescape")
         elif isinstance(val, (bytes, bytearray)):
-            self._value = bytes(val).decode("utf-8")
+            self._raw = bytes(val)
         else:
             raise BFTypeException(f"{type(self).__name__} value must be str or bytes")
 
     @property
     def length(self) -> int:
-        return len(self.pack())
+        return len(self._raw)
 
     def pack(self) -> bytes:
-        return self._value.encode("utf-8")
+        return self._raw
 
     def __str__(self) -> str:
         return self.pretty_print()
 
     def pretty_print(self, indent: int = 0) -> str:
-        shown = self._value if len(self._value) <= 30 else self._value[:30] + "..."
+        text = self.value
+        shown = text if len(text) <= 30 else text[:30] + "..."
         return " " * indent + "|- " + f"String {shown!r}"
 
 
@@ -411,6 +424,7 @@ class BFProtoKey(BFVarint):
     """
 
     EXTRA_TAGS = frozenset({"varint", "proto-key"})
+    _LABEL = "ProtoKey"
 
     @property
     def tags(self) -> frozenset:

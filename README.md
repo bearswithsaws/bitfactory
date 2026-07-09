@@ -179,8 +179,11 @@ next read after the sections above. It covers all four wire types:
 | 2 LEN | string / bytes / embedded message | `BFProtoString` / `BFBuffer` / `BFProtoMessage` |
 | 5 I32 | float | `BFProtoFloat` (fixed32 ints: little-endian `BFUInt*`) |
 
-The module is **not** imported by `import bitfactory`; opt in explicitly (or let
-entry-point discovery register the types once the package is installed):
+`import bitfactory` does not re-export these types into its namespace, so import
+the module explicitly to use them directly. (When the package is installed,
+entry-point discovery imports this module at `import bitfactory` time to register
+the types in the registry — so `get_type("proto_varint")` works without the
+explicit import.)
 
 ```python
 from bitfactory.protobuf import BFProtoMessage, BFVarint, BFProtoString

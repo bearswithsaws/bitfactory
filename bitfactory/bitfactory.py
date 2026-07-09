@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 from .exceptions import BFEndianException, BFRangeException, BFTypeException
 from .registry import register_type
 
+logger = logging.getLogger(__name__)
+
 ByteOrder = Literal["little", "big"]
 
 
@@ -317,22 +319,26 @@ class BFContainer(BFBasicDataType):
         self._parent = None
 
     def add(self, name, obj):
-        root = name
         obj._parent = self
+        root = name
         sub_container = None
-        logging.debug(name)
         if "." in root:
             root, sub_container = root.split(".", 1)
-        logging.debug("%s : %s", root, sub_container)
-        logging.debug("Adding %s to %s (sub: %s)", type(obj), root, sub_container)
-        if root is not None and sub_container is None and isinstance(obj, BFContainer):
-            obj.name = root
-        if root in iter(self._children) and sub_container is not None:
-            # Recurse into the existing sub-container.
-            self._children[root].add(sub_container, obj)
+        logger.debug("Adding %s to %r (sub: %s)", type(obj).__name__, root, sub_container)
+        if sub_container is not None:
+            # Dotted path: descend into an existing child container. Refuse to
+            # add into a missing or non-container child rather than silently
+            # dropping the tail of the path (which would misplace ``obj``).
+            child = self._children.get(root)
+            if not isinstance(child, BFContainer):
+                raise BFTypeException(
+                    f"cannot add {sub_container!r}: {root!r} is not an existing sub-container"
+                )
+            child.add(sub_container, obj)
         else:
+            if isinstance(obj, BFContainer):
+                obj.name = root
             self._children[root] = obj
-
         return self
 
     def __getattr__(self, name):
@@ -588,11 +594,3 @@ def count_of(
     if not isinstance(container, BFContainer):
         raise BFTypeException("count_of target must be a BFContainer")
     return BFComputed(field, lambda ctx: ctx.count(container), mutable=mutable)
-
-
-def main():
-    pass
-
-
-if __name__ == "__main__":
-    main()

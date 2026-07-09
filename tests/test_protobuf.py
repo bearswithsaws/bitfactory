@@ -142,6 +142,17 @@ class TestString:
     def test_bytes_input_decoded(self):
         assert BFProtoString(b"hi").value == "hi"
 
+    def test_arbitrary_bytes_round_trip(self):
+        # Non-UTF-8 fuzz bytes must survive a set/pack round-trip so mutated
+        # string content packs onto the wire unchanged.
+        s = BFProtoString("hi")
+        s.value = bytes(range(256))
+        assert s.pack() == bytes(range(256))
+
+    def test_advertises_buffer_trait(self):
+        # Carrying "buffer" is what lets the buffer mutators fuzz the content.
+        assert "buffer" in BFProtoString("x").tags
+
 
 class TestProtoKey:
     @pytest.mark.parametrize(
@@ -251,3 +262,25 @@ class TestMutatorIntegration:
         for mutator in create_full_mutator_suite():
             mutatable.add_mutator(mutator)
         assert any("_len" in r.path for r in mutatable)
+
+    def test_string_payload_content_is_fuzzed(self):
+        # A LEN string's *content* (not just its length prefix) is fuzzed by the
+        # buffer mutators, matching how a raw BFBuffer payload is treated.
+        m = BFProtoMessage()
+        m.add_field(2, BFProtoString("hello"))
+        mutatable = BFMutatable(m)
+        for mutator in create_full_mutator_suite():
+            mutatable.add_mutator(mutator)
+        value_mutators = {r.mutator_name for r in mutatable if r.path == "field2._value"}
+        assert any("Buffer" in name for name in value_mutators)
+
+    def test_len_field_reports_true_original_length(self):
+        # original_value of the mutable length prefix reflects the real payload
+        # length, not the storage field's stale zero.
+        m = BFProtoMessage()
+        m.add_field(2, BFProtoString("hello"))  # 5 bytes
+        mutatable = BFMutatable(m)
+        for mutator in create_full_mutator_suite():
+            mutatable.add_mutator(mutator)
+        len_originals = {r.original_value for r in mutatable if r.path == "field2._len"}
+        assert len_originals == {5}

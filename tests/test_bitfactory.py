@@ -4,7 +4,19 @@
 import pytest
 
 from bitfactory import *  # pylint: disable=W0401,W0614
-from bitfactory.exceptions import BFRangeException, BFTypeException
+from bitfactory.exceptions import BFException, BFRangeException, BFTypeException
+
+
+class TestExceptionHierarchy:
+    """All library exceptions share the BFException base."""
+
+    def test_subclasses_of_base(self):
+        assert issubclass(BFRangeException, BFException)
+        assert issubclass(BFTypeException, BFException)
+
+    def test_base_catches_specific(self):
+        with pytest.raises(BFException):
+            BFUInt8(value=b"abc")
 
 
 class TestBFUInt8:
@@ -214,12 +226,32 @@ class TestBFContainerShorthand:
         bf_test.add("test", BFUInt32(value=0x1337))
         bf_test.add("test2", BFUInt8(value=b"A"))
         bf_test.add("sub", BFContainer())
+        bf_test.add("sub.test_sub", BFContainer())
         bf_test.add("sub.test_val", BFUInt16(value=0xAABB))
         bf_test.add("sub.another_sub", BFContainer())
         bf_test.add("sub.another_sub.sub_item", BFUInt8(value=1))
         bf_test.add("sub.another_sub.sub_item2", BFUInt8(value=2))
-        bf_test.add("sub.test.sub_sub", BFContainer())
-        bf_test.add("sub.test.sub_sub.deep_value", BFUInt32(value=0xEEFF))
+        bf_test.add("sub.test_sub.sub_sub", BFContainer())
+        bf_test.add("sub.test_sub.sub_sub.deep_value", BFUInt32(value=0xEEFF))
+
+
+class TestBFContainerAddValidation:
+    """add() with a dotted path requires the intermediate container to exist."""
+
+    def test_missing_intermediate_raises(self):
+        bf_test = BFContainer()
+        bf_test.add("sub", BFContainer())
+        # "sub.missing" does not exist, so adding beneath it must raise rather
+        # than silently misplacing the object at the wrong depth.
+        with pytest.raises(BFTypeException, match="not an existing sub-container"):
+            bf_test.add("sub.missing.leaf", BFUInt8(value=1))
+
+    def test_intermediate_not_a_container_raises(self):
+        bf_test = BFContainer()
+        bf_test.add("sub", BFContainer())
+        bf_test.add("sub.leaf", BFUInt8(value=1))
+        with pytest.raises(BFTypeException, match="not an existing sub-container"):
+            bf_test.add("sub.leaf.deeper", BFUInt8(value=2))
 
 
 class TestBFLength:

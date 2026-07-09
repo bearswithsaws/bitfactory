@@ -43,12 +43,18 @@ from .registry import register_mutator
 
 
 class TraversalOrder(Enum):
-    """Defines the order in which mutator nodes are evaluated during iteration.
+    """Order in which fields are visited during mutation iteration.
+
+    Only leaf fields are mutation points, and a tree's leaves have the same
+    relative order in depth-first pre- and post-order. ``DFS_PREORDER`` and
+    ``DFS_POSTORDER`` therefore yield the same sequence today; both are kept so
+    the distinction is available if container-level mutation is ever added.
+    ``BFS`` produces an observably different (level-by-level) order.
 
     Attributes:
-        DFS_PREORDER: Depth-first, process node before children (root first)
-        DFS_POSTORDER: Depth-first, process node after children (leaves first)
-        BFS: Breadth-first, process level by level
+        DFS_PREORDER: Depth-first, declaration order (the default).
+        DFS_POSTORDER: Depth-first; equivalent to ``DFS_PREORDER`` for leaves.
+        BFS: Breadth-first, level by level.
     """
 
     DFS_PREORDER = auto()
@@ -436,8 +442,9 @@ class BFBitFlipMutator(BFMutator):
             return
 
         if "buffer" in bf_type.tags:
-            # For buffers, flip each bit in each byte
-            original = bf_type.value
+            # For buffers, flip each bit in each byte. Read via pack() so a
+            # text-valued byte field (BFProtoString) is handled the same way.
+            original = bf_type.pack()
             for byte_idx in range(len(original)):
                 for bit_idx in range(8):
                     # Create a copy with one bit flipped
@@ -511,7 +518,10 @@ class BFBufferLengthMutator(BFMutator):
         if not self.can_mutate(bf_type):
             return
 
-        original_len = len(bf_type.value)
+        # Read the current content as bytes via pack() so this works uniformly
+        # for bytes-valued (BFBuffer) and text-valued (BFProtoString) fields.
+        original = bf_type.pack()
+        original_len = len(original)
 
         yield (b"", "Empty buffer (length=0)")
         yield (b"\x00", "Single null byte")
@@ -521,9 +531,9 @@ class BFBufferLengthMutator(BFMutator):
             new_len = original_len + delta
             if new_len > 0 and new_len != original_len:
                 if new_len > original_len:
-                    new_data = bf_type.value + (b"\x41" * (new_len - original_len))
+                    new_data = original + (b"\x41" * (new_len - original_len))
                 else:
-                    new_data = bf_type.value[:new_len]
+                    new_data = original[:new_len]
                 yield (new_data, f"Length {original_len} -> {new_len} (delta={delta:+d})")
 
         boundary_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 255, 256, 512, 1024, 4096]
@@ -560,11 +570,12 @@ class BFBufferContentMutator(BFMutator):
         if not self.can_mutate(bf_type):
             return
 
-        original_len = max(len(bf_type.value), 16)
+        original = bf_type.pack()
+        original_len = max(len(original), 16)
 
         yield (b"\x00" * original_len, "All null bytes")
         yield (
-            bf_type.value[:1] + b"\x00" + bf_type.value[2:] if len(bf_type.value) > 2 else b"\x00",
+            original[:1] + b"\x00" + original[2:] if len(original) > 2 else b"\x00",
             "Embedded null byte",
         )
 
@@ -613,7 +624,7 @@ class BFBufferNullTerminationMutator(BFMutator):
         if not self.can_mutate(bf_type):
             return
 
-        original = bf_type.value
+        original = bf_type.pack()
         length = len(original)
 
         if original.endswith(b"\x00"):
@@ -725,10 +736,10 @@ class BFMutatable:
         """Yield nodes in the configured traversal order."""
         if self._traversal_order == TraversalOrder.BFS:
             yield from self._bfs_traverse()
-        elif self._traversal_order == TraversalOrder.DFS_PREORDER:
-            yield from self._dfs_preorder_traverse()
-        elif self._traversal_order == TraversalOrder.DFS_POSTORDER:
-            yield from self._dfs_postorder_traverse()
+        else:
+            # Both DFS orders resolve to the same leaf sequence (see
+            # TraversalOrder), so one depth-first walk serves both.
+            yield from self._dfs_traverse()
 
     def _traverse_node(
         self, node: BFBasicDataType, path: str
@@ -790,29 +801,9 @@ class BFMutatable:
             else:
                 yield (path, node)
 
-    def _dfs_preorder_traverse(
-        self,
-        node: Optional[BFBasicDataType] = None,
-        path: str = "",
-    ) -> Generator[tuple[str, BFBasicDataType], None, None]:
-        """Depth-first preorder traversal."""
-        if node is None:
-            node = self._root
-
-        yield from self._traverse_node(node, path)
-
-    def _dfs_postorder_traverse(
-        self,
-        node: Optional[BFBasicDataType] = None,
-        path: str = "",
-    ) -> Generator[tuple[str, BFBasicDataType], None, None]:
-        """Depth-first postorder traversal."""
-        if node is None:
-            node = self._root
-
-        # For postorder, we still use the same traversal but conceptually
-        # children are processed before parents (which matters for containers)
-        yield from self._traverse_node(node, path)
+    def _dfs_traverse(self) -> Generator[tuple[str, BFBasicDataType], None, None]:
+        """Depth-first walk yielding the tree's mutation-point leaves."""
+        yield from self._traverse_node(self._root, "")
 
     def _get_applicable_mutators(
         self,
@@ -921,7 +912,11 @@ class BFMutatable:
                 if not hasattr(node, "value"):
                     continue
 
-                original_value = node.value
+                # The storage field of a mutable computed value (e.g. a length)
+                # reads as a stale 0 until a pack recomputes it; report the
+                # owner's computed value so original_value reflects reality.
+                owner = getattr(node, "_computed_owner", None)
+                original_value = owner.value if owner is not None else node.value
 
                 for mutator in self._get_applicable_mutators(path, node):
                     for mutated_value, description in mutator.mutate(node):
